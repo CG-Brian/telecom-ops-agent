@@ -1,0 +1,385 @@
+# Snowflake Cortex Analyst — Semantic View YAML (권장 형식)
+# DB/스키마의 뷰 5개에 대한 비즈니스 시맨틱 정의
+
+name: kr_telecom_contracts_marketing_call_insights
+description: >
+  한국 통신 구독·계약, 마케팅(GA4 유입), 콜센터(월별·시간대별) 데이터를
+  지역·상품·채널 관점에서 분석하기 위한 시맨틱 모델입니다.
+
+tables:
+  - name: v01_monthly_regional_contract_stats
+    description: >
+      월별·시도·시군구·상품 카테고리 단위의 계약 건수, 전환율, 순매출 요약 통계입니다.
+    base_table:
+      database: SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION
+      schema: TELECOM_INSIGHTS
+      table: V01_MONTHLY_REGIONAL_CONTRACT_STATS
+    time_dimensions:
+      - name: year_month
+        synonyms: ["지역계약 년월", "지역계약 기준월", "지역 계약 월별", "지역 계약 일자"]
+        description: 월별 기준일(월)입니다. 통계가 집계된 달을 나타냅니다.
+        expr: YEAR_MONTH
+        data_type: DATE
+        unique: false
+    dimensions:
+      - name: install_state
+        synonyms: ["시도", "도", "설치 시도", "지역"]
+        description: "설치 지역의 시·도 단위(예: 서울)입니다."
+        sample_values: ["서울", "경기", "부산"]
+        expr: INSTALL_STATE
+        data_type: VARCHAR
+        unique: false
+      - name: install_city
+        synonyms: ["시군구", "구", "군", "시", "지역 구"]
+        description: 설치 지역의 시·군·구 단위입니다.
+        expr: INSTALL_CITY
+        data_type: VARCHAR
+        unique: false
+      - name: main_category_name
+        synonyms: ["지역 계약 상품 카테고리", "설치 상품 카테고리", "지역 상품군"]
+        description: 렌탈, 인터넷, 모바일 등 주요 상품 카테고리명입니다.
+        expr: MAIN_CATEGORY_NAME
+        data_type: VARCHAR
+        unique: false
+    facts:
+      - name: contract_count
+        synonyms: ["계약 건수", "계약수"]
+        description: 해당 월·지역·카테고리의 계약 건수입니다.
+        expr: CONTRACT_COUNT
+        data_type: NUMBER
+      - name: open_cvr
+        synonyms: ["지역계약 개통 전환율", "지역 개통률"]
+        description: 개통 단계까지의 전환율입니다.
+        expr: OPEN_CVR
+        data_type: NUMBER
+      - name: payend_cvr
+        synonyms: ["지역계약 지급 전환율", "지역 지급 완료 전환율"]
+        description: 지급(완료) 단계까지의 전환율입니다.
+        expr: PAYEND_CVR
+        data_type: NUMBER
+      - name: total_net_sales
+        synonyms: ["순매출", "매출", "총 매출액"]
+        description: 해당 행 기준 총 순매출 금액입니다.
+        expr: TOTAL_NET_SALES
+        data_type: NUMBER
+    metrics:
+      - name: total_contracts
+        description: 집계 구간 내 계약 건수 합계입니다.
+        expr: SUM(contract_count)
+      - name: total_net_sales_amount
+        description: 집계 구간 내 순매출 합계입니다.
+        expr: SUM(total_net_sales)
+      - name: avg_open_cvr
+        description: 행 단위 개통 전환율의 산술 평균입니다(가중 평균이 필요하면 별도 정의).
+        expr: AVG(open_cvr)
+      - name: avg_payend_cvr
+        description: 행 단위 지급 전환율의 산술 평균입니다.
+        expr: AVG(payend_cvr)
+
+  - name: v03_contract_funnel_conversion
+    description: >
+      월별·상품 카테고리별 계약 퍼널(상담요청→접수→개통→지급) 단계 전환율 및 전체 전환율입니다.
+    base_table:
+      database: SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION
+      schema: TELECOM_INSIGHTS
+      table: V03_CONTRACT_FUNNEL_CONVERSION
+    time_dimensions:
+      - name: year_month
+        synonyms: ["퍼널 년월", "퍼널 기준월", "퍼널 월별"]
+        description: 퍼널 지표가 집계된 기준 월입니다.
+        expr: YEAR_MONTH
+        data_type: DATE
+        unique: false
+    dimensions:
+      - name: main_category_name
+        synonyms: ["퍼널 상품 카테고리", "퍼널 카테고리", "퍼널 상품군"]
+        description: "퍼널을 구분하는 상품 카테고리(예: 렌탈, 인터넷, 모바일)입니다."
+        expr: MAIN_CATEGORY_NAME
+        data_type: VARCHAR
+        unique: false
+    facts:
+      - name: funnel_total_count
+        synonyms: ["총 건수", "퍼널 유입 건수"]
+        description: 퍼널 상단 기준 총 건수입니다.
+        expr: TOTAL_COUNT
+        data_type: NUMBER
+      - name: cvr_consult_request
+        synonyms: ["상담요청 전환율", "상담 요청 CVR"]
+        description: 상담 요청 단계 전환율입니다.
+        expr: CVR_CONSULT_REQUEST
+        data_type: NUMBER
+      - name: cvr_registend
+        synonyms: ["접수 전환율", "접수 CVR"]
+        description: 접수(등록 완료) 단계 전환율입니다.
+        expr: CVR_REGISTEND
+        data_type: NUMBER
+      - name: cvr_open
+        synonyms: ["퍼널 개통 전환율", "퍼널 개통 CVR"]
+        description: 개통 단계 전환율입니다.
+        expr: CVR_OPEN
+        data_type: NUMBER
+      - name: cvr_payend
+        synonyms: ["퍼널 지급 전환율", "퍼널 지급 CVR"]
+        description: 지급 완료 단계 전환율입니다.
+        expr: CVR_PAYEND
+        data_type: NUMBER
+      - name: overall_cvr
+        synonyms: ["전체 전환율", "종합 CVR"]
+        description: 퍼널 전체에 대한 종합 전환율입니다.
+        expr: OVERALL_CVR
+        data_type: NUMBER
+    metrics:
+      - name: sum_funnel_total_count
+        description: 퍼널 총 건수의 합계입니다.
+        expr: SUM(funnel_total_count)
+      - name: avg_overall_cvr
+        description: 종합 전환율의 산술 평균입니다.
+        expr: AVG(overall_cvr)
+
+  - name: v07_ga4_marketing_attribution
+    description: >
+      GA4 UTM 기준 월별 마케팅 채널(소스/매체)별 세션, 계약, 매출, 계약 전환율입니다.
+    base_table:
+      database: SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION
+      schema: TELECOM_INSIGHTS
+      table: V07_GA4_MARKETING_ATTRIBUTION
+    time_dimensions:
+      - name: year_month
+        synonyms: ["마케팅 년월", "마케팅 기준월"]
+        description: 마케팅·계약 지표가 집계된 기준 월입니다.
+        expr: YEAR_MONTH
+        data_type: DATE
+        unique: false
+    dimensions:
+      - name: utm_source
+        synonyms: ["채널 소스", "유입 소스", "매체 소스"]
+        description: UTM 소스(naver, google, kakao 등)입니다.
+        sample_values: ["naver", "google", "kakao"]
+        expr: UTM_SOURCE
+        data_type: VARCHAR
+        unique: false
+      - name: utm_medium
+        synonyms: ["채널 매체", "유입 매체", "utm 미디엄"]
+        description: UTM 매체(cpc, keyword, display 등)입니다.
+        expr: UTM_MEDIUM
+        data_type: VARCHAR
+        unique: false
+    facts:
+      - name: ga_total_sessions
+        synonyms: ["세션 수", "방문 세션"]
+        description: 해당 채널·월의 총 세션 수입니다.
+        expr: TOTAL_SESSIONS
+        data_type: NUMBER
+      - name: ga_total_contracts
+        synonyms: ["귀속 계약 수", "채널 계약 수"]
+        description: 해당 채널·월에 귀속된 계약 건수입니다.
+        expr: TOTAL_CONTRACTS
+        data_type: NUMBER
+      - name: ga_total_revenue
+        synonyms: ["채널 매출", "귀속 매출"]
+        description: 해당 채널·월의 총 매출입니다.
+        expr: TOTAL_REVENUE
+        data_type: NUMBER
+      - name: ga_contract_cvr
+        synonyms: ["마케팅 계약 전환율", "GA4 세션 대비 계약율"]
+        description: 행 단위로 제공되는 계약 전환율입니다.
+        expr: CONTRACT_CVR
+        data_type: NUMBER
+    metrics:
+      - name: total_marketing_sessions
+        description: 마케팅 세션 수 합계입니다.
+        expr: SUM(ga_total_sessions)
+      - name: total_marketing_contracts
+        description: 귀속 계약 수 합계입니다.
+        expr: SUM(ga_total_contracts)
+      - name: total_marketing_revenue
+        description: 귀속 매출 합계입니다.
+        expr: SUM(ga_total_revenue)
+
+  - name: v09_monthly_call_stats
+    description: >
+      월별·수발신 구분·상품 카테고리별 콜센터 통화 건수, 연결/미연결, 연결률입니다.
+    base_table:
+      database: SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION
+      schema: TELECOM_INSIGHTS
+      table: V09_MONTHLY_CALL_STATS
+    time_dimensions:
+      - name: year_month
+        synonyms: ["콜월별 년월", "콜월별 기준월"]
+        description: 콜 통계가 집계된 기준 월입니다.
+        expr: YEAR_MONTH
+        data_type: DATE
+        unique: false
+    dimensions:
+      - name: division_name
+        synonyms: ["월간 콜 수발신 구분", "월간 콜 구분", "월간 인아웃"]
+        description: 수신 또는 발신 등 통화 구분입니다.
+        expr: DIVISION_NAME
+        data_type: VARCHAR
+        unique: false
+      - name: main_category_name
+        synonyms: ["콜 통계 상품 카테고리", "콜 상품군"]
+        description: 통화가 연계된 상품 카테고리입니다.
+        expr: MAIN_CATEGORY_NAME
+        data_type: VARCHAR
+        unique: false
+    facts:
+      - name: call_count
+        synonyms: ["월간 통화 건수", "월간 콜 수"]
+        description: 통화 시도 건수입니다.
+        expr: CALL_COUNT
+        data_type: NUMBER
+      - name: connected_count
+        synonyms: ["월간 연결 수", "월간 연결 통화"]
+        description: 연결된 통화 건수입니다.
+        expr: CONNECTED_COUNT
+        data_type: NUMBER
+      - name: unconnected_count
+        synonyms: ["월간 미연결 수"]
+        description: 미연결 통화 건수입니다.
+        expr: UNCONNECTED_COUNT
+        data_type: NUMBER
+      - name: connection_rate
+        synonyms: ["월간 연결률", "월간 통화 연결율"]
+        description: 연결률(연결/시도)입니다.
+        expr: CONNECTION_RATE
+        data_type: NUMBER
+    metrics:
+      - name: total_calls
+        description: 통화 건수 합계입니다.
+        expr: SUM(call_count)
+      - name: avg_connection_rate
+        description: 연결률의 산술 평균입니다.
+        expr: AVG(connection_rate)
+
+  - name: v10_hourly_call_distribution
+    description: >
+      요일·시간대·수발신 구분별 콜센터 통화 분포 및 연결률입니다.
+    base_table:
+      database: SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION
+      schema: TELECOM_INSIGHTS
+      table: V10_HOURLY_CALL_DISTRIBUTION
+    dimensions:
+      - name: hour_of_day
+        synonyms: ["콜 시간대", "콜 시간(시)", "하루 시간 슬롯"]
+        description: 하루 중 시각(0~23)입니다.
+        expr: HOUR_OF_DAY
+        data_type: NUMBER
+        unique: false
+      - name: day_of_week_name
+        synonyms: ["콜 분포 요일", "요일명", "주간 패턴 요일"]
+        description: 요일 이름(일~토 등 데이터에 저장된 표기)입니다.
+        sample_values: ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일", "Sunday", "Monday"]
+        expr: DAY_OF_WEEK_NAME
+        data_type: VARCHAR
+        unique: false
+      - name: division_name
+        synonyms: ["시간대 콜 수발신 구분"]
+        description: 수신 또는 발신 등 통화 구분입니다.
+        expr: DIVISION_NAME
+        data_type: VARCHAR
+        unique: false
+    facts:
+      - name: call_count
+        synonyms: ["시간대 통화 건수", "시간대 콜 수"]
+        description: 해당 시간대·요일·구분의 통화 건수입니다.
+        expr: CALL_COUNT
+        data_type: NUMBER
+      - name: connected_count
+        synonyms: ["시간대 연결 수", "시간대 연결 통화"]
+        description: 연결된 통화 건수입니다.
+        expr: CONNECTED_COUNT
+        data_type: NUMBER
+      - name: connection_rate
+        synonyms: ["시간대 연결률", "시간대 통화 연결율"]
+        description: 연결률입니다.
+        expr: CONNECTION_RATE
+        data_type: NUMBER
+    metrics:
+      - name: total_calls_hourly
+        description: 통화 건수 합계입니다.
+        expr: SUM(call_count)
+      - name: avg_connection_rate_hourly
+        description: 연결률의 산술 평균입니다.
+        expr: AVG(connection_rate)
+
+verified_queries:
+  - name: top_install_city_contracts_last_month
+    question: "지난달 계약이 제일 많은 구는?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        install_city,
+        SUM(contract_count) AS total_contracts
+      FROM __v01_monthly_regional_contract_stats
+      WHERE year_month >= DATE_TRUNC('month', DATEADD('month', -1, CURRENT_DATE()))
+        AND year_month < DATE_TRUNC('month', CURRENT_DATE())
+      GROUP BY install_city
+      ORDER BY total_contracts DESC NULLS LAST
+      LIMIT 1;
+
+  - name: kakao_keyword_contract_cvr
+    question: "카카오 키워드 CVR이 얼마야?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        SUM(ga_total_contracts) / NULLIF(SUM(ga_total_sessions), 0) AS weighted_contract_cvr,
+        SUM(ga_total_contracts) AS total_contracts,
+        SUM(ga_total_sessions) AS total_sessions
+      FROM __v07_ga4_marketing_attribution
+      WHERE LOWER(COALESCE(utm_source, '')) = 'kakao'
+        AND (
+          LOWER(COALESCE(utm_medium, '')) LIKE '%keyword%'
+          OR LOWER(COALESCE(utm_medium, '')) LIKE '%키워드%'
+        );
+
+  - name: rental_funnel_largest_drop_stage
+    question: "렌탈 퍼널에서 이탈이 가장 많은 단계는?"
+    use_as_onboarding_question: true
+    sql: |
+      WITH latest AS (
+        SELECT *
+        FROM __v03_contract_funnel_conversion
+        WHERE main_category_name = '렌탈'
+        QUALIFY ROW_NUMBER() OVER (ORDER BY year_month DESC) = 1
+      ),
+      drops AS (
+        SELECT '상담요청→접수' AS transition, (cvr_consult_request - cvr_registend) AS dropoff FROM latest
+        UNION ALL
+        SELECT '접수→개통', (cvr_registend - cvr_open) FROM latest
+        UNION ALL
+        SELECT '개통→지급', (cvr_open - cvr_payend) FROM latest
+      )
+      SELECT transition, dropoff
+      FROM drops
+      ORDER BY dropoff DESC NULLS LAST
+      LIMIT 1;
+
+  - name: sunday_call_center_connection_rate
+    question: "일요일 콜센터 연결률은?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        SUM(connected_count) / NULLIF(SUM(call_count), 0) AS weighted_connection_rate,
+        AVG(connection_rate) AS avg_reported_connection_rate,
+        SUM(call_count) AS total_calls,
+        SUM(connected_count) AS total_connected
+      FROM __v10_hourly_call_distribution
+      WHERE LOWER(COALESCE(day_of_week_name, '')) IN ('일요일', 'sunday', 'sun', '일')
+        OR day_of_week_name = '일';
+
+  - name: most_efficient_marketing_channel_by_cvr
+    question: "어떤 마케팅 채널이 제일 효율적이야?"
+    use_as_onboarding_question: true
+    sql: |
+      SELECT
+        utm_source,
+        SUM(ga_total_contracts) / NULLIF(SUM(ga_total_sessions), 0) AS contract_cvr,
+        SUM(ga_total_contracts) AS contracts,
+        SUM(ga_total_sessions) AS sessions,
+        SUM(ga_total_revenue) AS revenue
+      FROM __v07_ga4_marketing_attribution
+      GROUP BY utm_source
+      HAVING SUM(ga_total_sessions) > 0
+      ORDER BY contract_cvr DESC NULLS LAST
+      LIMIT 10;
