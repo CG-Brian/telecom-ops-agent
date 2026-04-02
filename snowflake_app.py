@@ -37,20 +37,21 @@ STATIC_CONTEXT = """
 PREBUILT_SQLS = {
     "marketing": """
 SELECT
-  utm_source,
-  SUM(ga_total_contracts) / NULLIF(SUM(ga_total_sessions), 0) AS contract_cvr,
-  SUM(ga_total_contracts) AS total_contracts,
-  SUM(ga_total_sessions) AS total_sessions,
-  SUM(ga_total_revenue) AS total_revenue
-FROM v07_ga4_marketing_attribution
-GROUP BY utm_source
-HAVING SUM(ga_total_sessions) > 0
+  UTM_SOURCE,
+  UTM_MEDIUM,
+  SUM(TOTAL_CONTRACTS) / NULLIF(SUM(TOTAL_SESSIONS), 0) AS contract_cvr,
+  SUM(TOTAL_CONTRACTS) AS total_contracts,
+  SUM(TOTAL_SESSIONS) AS total_sessions,
+  SUM(TOTAL_REVENUE) AS total_revenue
+FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V07_GA4_MARKETING_ATTRIBUTION
+GROUP BY UTM_SOURCE, UTM_MEDIUM
+HAVING SUM(TOTAL_SESSIONS) > 0
 ORDER BY contract_cvr DESC NULLS LAST
 """,
     "funnel": """
 WITH latest AS (
   SELECT *
-  FROM v03_contract_funnel_conversion
+  FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V03_CONTRACT_FUNNEL_CONVERSION
   WHERE main_category_name = '렌탈'
   QUALIFY ROW_NUMBER() OVER (ORDER BY year_month DESC) = 1
 ),
@@ -66,18 +67,22 @@ LIMIT 1
 """,
     "cs": """
 SELECT
-  SUM(hourly_connected_count) / NULLIF(SUM(hourly_call_count), 0) AS weighted_connection_rate,
-  AVG(hourly_connection_rate) AS avg_connection_rate,
-  SUM(hourly_call_count) AS total_calls
-FROM v10_hourly_call_distribution
-WHERE LOWER(COALESCE(day_of_week_name, '')) IN ('일', '일요일', 'sunday', 'sun')
+  DAY_OF_WEEK_NAME,
+  HOUR_OF_DAY,
+  SUM(CONNECTED_COUNT) / NULLIF(SUM(CALL_COUNT), 0) AS weighted_connection_rate,
+  AVG(CONNECTION_RATE) AS avg_connection_rate,
+  SUM(CALL_COUNT) AS total_calls
+FROM SOUTH_KOREA_TELECOM_SUBSCRIPTION_ANALYTICS__CONTRACTS_MARKETING_AND_CALL_CENTER_INSIGHTS_BY_REGION.TELECOM_INSIGHTS.V10_HOURLY_CALL_DISTRIBUTION
+GROUP BY DAY_OF_WEEK_NAME, HOUR_OF_DAY
+ORDER BY weighted_connection_rate ASC NULLS LAST
+LIMIT 1
 """,
 }
 
 DEMO_QUESTION_DOMAIN_MAP = {
     "어떤 마케팅 채널이 제일 효율적이야?": "marketing",
-    "렌탈 퍼널에서 이탈이 가장 많은 단계는?": "funnel",
-    "일요일 콜센터 연결률은?": "cs",
+    "렌탈 퍼널에서 전환율을 가장 크게 떨어뜨리는 병목은 어디야?": "funnel",
+    "콜센터 연결률이 가장 낮은 시간대는 언제고, 어떻게 개선해야 해?": "cs",
 }
 
 logger = logging.getLogger(__name__)
@@ -163,7 +168,7 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
         result["notes"].append("SQL 결과가 없거나 실행 행이 0건입니다.")
         return result
 
-    # ── 마케팅: CVR + Revenue 복합 score + 비교 기준 ──
+    # ── 마케팅 ──
     best_ch = None
     best_cvr = -1.0
     best_src = None
@@ -292,23 +297,39 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
                 except (TypeError, ValueError):
                     pass
 
-    # ── CS ──
+    # ── CS: 연결률 (% 단위 → 소수 변환) ──
     conn_rates: list[float] = []
+    day_info = ""
+    hour_info = ""
     for r in rows:
         u = {str(k).upper(): v for k, v in r.items()}
-        for key in ("WEIGHTED_CONNECTION_RATE", "CONNECTION_RATE", "AVG_CONNECTION_RATE", "AVG_REPORTED_CONNECTION_RATE"):
+        # 요일/시간 정보 추출
+        if u.get("DAY_OF_WEEK_NAME"):
+            day_info = str(u["DAY_OF_WEEK_NAME"])
+        if u.get("HOUR_OF_DAY") is not None:
+            hour_info = str(u["HOUR_OF_DAY"])
+        for key in ("WEIGHTED_CONNECTION_RATE", "AVG_CONNECTION_RATE", "CONNECTION_RATE"):
             if key in u and u[key] is not None:
                 try:
-                    conn_rates.append(float(u[key]))
+                    v = float(u[key])
+                    # % 단위(0~100)면 소수로 변환
+                    if v > 1:
+                        v = v / 100
+                    conn_rates.append(v)
+                    break
                 except (TypeError, ValueError):
                     pass
 
     if conn_rates:
         avg_cr = sum(conn_rates) / len(conn_rates)
+        peak_label = f"{day_info} {hour_info}시" if day_info and hour_info else "N/A"
         result["cs"] = {
             "connection_rate": avg_cr,
+            "connection_rate_pct": round(avg_cr * 100, 1),
             "target": 0.70,
             "below_target": avg_cr < 0.70,
+            "gap_to_target_pct": round((0.70 - avg_cr) * 100, 1) if avg_cr < 0.70 else 0,
+            "peak_time": peak_label,
             "source": "sql_connection_rate",
         }
     elif "cs" in intent.get("domains", []):
@@ -377,10 +398,17 @@ def build_llm_prompt(
 7) action_items는 반드시 3개, 구체적으로 작성하세요.
    나쁜 예시 (절대 금지): "추가 분석하세요", "전략을 수립하세요", "모니터링하세요"
    좋은 예시: "해당 채널 예산을 20~30% 확대하는 A/B 테스트를 진행하세요"
+7-1) action_items 첫 번째 항목은 반드시
+     "⭐ [액션내용] (우선 실행)" 형태로 작성하세요.
 8) marketing_recommendation.action에는 채널 특성 기반 인과 설명을 포함하세요.
    - utm_medium이 "direct_ps"면 → "direct 유입 특성상 고의도 고객 비중이 높아 CVR이 높게 나타납니다"
    - utm_source가 "kakao"면 → "카카오 채널 특성상 모바일 친화적 고객군입니다"
    - utm_source가 "naver"면 → "네이버 검색 기반으로 정보 탐색 의도가 높은 고객입니다"
+9) cs_insight.action에는 반드시 rules의 connection_rate_pct, gap_to_target_pct를 활용해서
+   "현재 연결률 X%, 목표 70% 대비 Y%p 차이" 형태로 구체적 수치를 포함하세요.
+   peak_time도 반드시 언급하세요.
+10) funnel_bottleneck.action에는 이탈폭이 가장 큰 단계를 명시하고
+    구체적인 개선 방안을 제시하세요.
 
 출력 JSON 스키마:
 {json.dumps(EMPTY_JSON_TEMPLATE, ensure_ascii=False, indent=2)}
@@ -440,8 +468,9 @@ def merge_grounding(parsed: dict[str, Any], rules: dict[str, Any]) -> dict[str, 
     if c.get("connection_rate") is not None:
         ci = out.setdefault("cs_insight", {})
         ci["connection_rate"] = c["connection_rate"]
-        if not ci.get("peak_time"):
-            ci["peak_time"] = "일요일 (SQL 기준)"
+        # peak_time을 rule에서 가져옴
+        if not ci.get("peak_time") and c.get("peak_time"):
+            ci["peak_time"] = c["peak_time"]
     return out
 
 
@@ -452,7 +481,6 @@ def run_agent(user_question: str) -> dict[str, Any]:
     session = get_active_session()
     intent = parse_intent(user_question)
 
-    # 데모 질문이면 prebuilt SQL 사용, 아니면 빈 결과
     domain = DEMO_QUESTION_DOMAIN_MAP.get(user_question.strip())
     sql_stmt = PREBUILT_SQLS.get(domain) if domain else None
     analyst_text = f"Cortex Analyst 생성 SQL (도메인: {domain})" if domain else "지원되지 않는 질문입니다."
@@ -495,8 +523,8 @@ st.set_page_config(page_title="통신 운영 의사결정 에이전트", layout=
 
 DEMO_QUESTIONS_UI = [
     "어떤 마케팅 채널이 제일 효율적이야?",
-    "렌탈 퍼널에서 이탈이 가장 많은 단계는?",
-    "일요일 콜센터 연결률은?",
+    "렌탈 퍼널에서 전환율을 가장 크게 떨어뜨리는 병목은 어디야?",
+    "콜센터 연결률이 가장 낮은 시간대는 언제고, 어떻게 개선해야 해?",
 ]
 
 
@@ -532,11 +560,14 @@ def fmt_pct(value: Any) -> str:
         return "N/A"
 
 
-def confidence_parts(row_count: Any) -> tuple[str, str, str]:
+def confidence_parts(row_count: Any, domain: Optional[str] = None) -> tuple[str, str, str]:
     try:
         n = int(row_count)
     except (TypeError, ValueError):
         n = 0
+    # LIMIT 1 쿼리 (funnel, cs)는 1건이 정상
+    if domain in ("funnel", "cs") and n == 1:
+        return "🟡 보통", "보통", f"{n}건 (집계)"
     if n >= 100:
         return "🟢 높음", "높음", str(n)
     if n >= 10:
@@ -552,81 +583,124 @@ def safe_section(data: dict[str, Any], key: str) -> dict[str, Any]:
 def render_result(result: dict[str, Any]) -> None:
     meta = result.get("_meta") or {}
     row_count = meta.get("row_count", 0)
+    domain = meta.get("domain")
 
-    emoji, short, nstr = confidence_parts(row_count)
-    st.markdown("### Confidence Score")
-    st.caption(f"row_count 기준: {nstr}건 → {emoji}")
-    st.metric(label="데이터 신뢰도", value=short, delta=f"{nstr}건", delta_color="off")
-
-    region = (result.get("region_analysis") or "").strip()
-    region_display = region if region else "전체 데이터 기준"
+    emoji, short, nstr = confidence_parts(row_count, domain)
+    if short == "높음":
+        st.success(f"🟢 High Confidence (n={nstr})")
+    elif short == "보통":
+        st.warning(f"🟡 Medium Confidence (n={nstr})")
+    else:
+        st.error(f"🔴 Low Confidence (n={nstr})")
 
     mkt = safe_section(result, "marketing_recommendation")
     funnel = safe_section(result, "funnel_bottleneck")
     cs = safe_section(result, "cs_insight")
 
-    st.markdown("---")
-    st.markdown("### 분석 결과")
+    bc = (mkt.get("best_channel") or "").strip()
+    cvr_m = fmt_pct(mkt.get("cvr"))
+    action_m = (mkt.get("action") or "").strip()
+    has_marketing = bool(bc or mkt.get("cvr") is not None)
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.markdown("#### 📍 지역 분석")
-        st.metric("분석 기준", region_display)
-    with c2:
-        st.markdown("#### 📊 마케팅 추천")
-        bc = (mkt.get("best_channel") or "").strip()
-        cvr_m = fmt_pct(mkt.get("cvr"))
-        action_m = (mkt.get("action") or "").strip()
-        if not bc and mkt.get("cvr") is None and not action_m:
-            st.metric("요약", "N/A")
-        else:
-            st.markdown(f"**{bc}**" if bc else "**N/A**")
-            st.metric("CVR", cvr_m)
-            st.caption(action_m or "N/A")
+    stg = (funnel.get("stage") or "").strip()
+    funnel_source = meta.get("rules", {}).get("funnel", {}).get("source", "")
+    cvr_label = "이탈폭" if funnel_source == "sql_dropoff" else "CVR"
+    cvr_f = fmt_pct(funnel.get("cvr"))
+    action_f = (funnel.get("action") or "").strip()
+    has_funnel = bool(stg or funnel.get("cvr") is not None)
 
-    c3, c4 = st.columns(2)
-    with c3:
-        st.markdown("#### ⚠️ 퍼널 병목")
-        stg = (funnel.get("stage") or "").strip()
-        funnel_source = meta.get("rules", {}).get("funnel", {}).get("source", "")
-        cvr_label = "이탈폭" if funnel_source == "sql_dropoff" else "CVR"
-        cvr_f = fmt_pct(funnel.get("cvr"))
-        action_f = (funnel.get("action") or "").strip()
-        if not stg and funnel.get("cvr") is None and not action_f:
-            st.metric("요약", "N/A")
-        else:
-            st.markdown(f"**{stg}**" if stg else "**N/A**")
-            st.metric(cvr_label, cvr_f)
-            st.caption(action_f or "N/A")
-    with c4:
-        st.markdown("#### 📞 CS 인사이트")
-        conn = fmt_pct(cs.get("connection_rate"))
-        peak = (cs.get("peak_time") or "").strip()
-        action_c = (cs.get("action") or "").strip()
-        if cs.get("connection_rate") is None and not peak and not action_c:
-            st.metric("요약", "N/A")
-        else:
-            st.metric("연결률", conn)
-            st.caption(f"피크: {peak}" if peak else "피크: N/A")
-            st.caption(action_c or "N/A")
+    conn = fmt_pct(cs.get("connection_rate"))
+    peak = (cs.get("peak_time") or "").strip()
+    action_c = (cs.get("action") or "").strip()
+    has_cs = bool(cs.get("connection_rate") is not None or peak)
 
-    st.subheader("💡 Action Items")
+    # 1. 결론 카드 (최상단)
+    if has_marketing:
+        st.markdown("---")
+        st.markdown("## 🔥 추천 결론")
+        col_main, col_sub = st.columns([2, 1])
+        with col_main:
+            st.markdown(f"### 최적 채널: **{bc}**")
+            st.markdown(f"> 👉 이 채널에 예산을 집중하세요")
+            rules_mkt = meta.get("rules", {}).get("marketing", {})
+            cvr_vs = rules_mkt.get("cvr_vs_avg_pct", 0)
+            cvr_meaning = "전체 대비 매우 높음" if cvr_vs > 200 else "전체 대비 높음" if cvr_vs > 50 else ""
+            cvr_label_str = f"CVR {cvr_m} ({cvr_meaning})" if cvr_meaning else f"CVR {cvr_m}"
+            st.markdown(f"**{cvr_label_str}** &nbsp;|&nbsp; {action_m}")
+        with col_sub:
+            rules_mkt = meta.get("rules", {}).get("marketing", {})
+            cvr_vs = rules_mkt.get("cvr_vs_avg_pct")
+            rank = rules_mkt.get("rank")
+            total = rules_mkt.get("total_channels")
+            if cvr_vs:
+                st.metric("전체 평균 대비", f"+{cvr_vs}%")
+            if rank and total:
+                st.metric("채널 순위", f"{rank}위 / {total}개")
+    elif has_funnel:
+        st.markdown("---")
+        st.markdown("## 🔥 분석 결론")
+        st.markdown(f"### 병목 구간: **{stg}**")
+        st.markdown(f"**{cvr_label} {cvr_f}** &nbsp;|&nbsp; {action_f}")
+    elif has_cs:
+        st.markdown("---")
+        st.markdown("## 🔥 분석 결론")
+        st.markdown(f"### 최저 연결 시간대: **{peak}**")
+        st.markdown(f"**연결률 {conn}** &nbsp;|&nbsp; {action_c}")
+
+    # 2. Action Items (결론 바로 아래)
     items = result.get("action_items")
-    if not isinstance(items, list) or not items:
-        st.caption("액션 항목이 없습니다.")
-    else:
+    if isinstance(items, list) and items:
+        st.markdown("---")
+        st.markdown("## 💡 Action Items")
         for it in items:
-            clean = re.sub(r'^\d+\.\s*', '', str(it))
+            clean = re.sub(r"^\d+\.\s*", "", str(it))
             st.markdown(f"• {clean}")
 
-    with st.expander("🔍 추론 근거"):
-        st.markdown(result.get("reasoning") or "(없음)")
+    # 3. 상세 근거 (있는 것만)
+    has_detail = has_marketing or has_funnel or has_cs
+    if has_detail:
+        st.markdown("---")
+        st.markdown("### 📊 분석 근거")
+        cols_info = []
+        if has_marketing:
+            cols_info.append(("marketing", "📊 마케팅"))
+        if has_funnel:
+            cols_info.append(("funnel", "⚠️ 퍼널"))
+        if has_cs:
+            cols_info.append(("cs", "📞 CS"))
+
+        if cols_info:
+            grid = st.columns(len(cols_info))
+            for i, (key, label) in enumerate(cols_info):
+                with grid[i]:
+                    st.markdown(f"#### {label}")
+                    if key == "marketing":
+                        st.metric("CVR", cvr_m)
+                        rules_mkt = meta.get("rules", {}).get("marketing", {})
+                        rev = rules_mkt.get("total_revenue")
+                        sess = rules_mkt.get("total_sessions")
+                        if rev:
+                            st.caption(f"매출: {int(rev):,}원")
+                        if sess:
+                            st.caption(f"세션: {int(sess):,}건")
+                    elif key == "funnel":
+                        st.metric(cvr_label, cvr_f)
+                        st.caption(f"단계: {stg}")
+                    elif key == "cs":
+                        st.metric("연결률", conn)
+                        if peak:
+                            st.caption(f"최저 시간대: {peak}")
+
+    # 4. 추론 근거 + SQL (접기)
+    reasoning = result.get("reasoning") or ""
+    if reasoning:
+        with st.expander("🔍 추론 근거"):
+            st.markdown(reasoning)
 
     with st.expander("🛠️ 기술 상세 (SQL + 메타)"):
         sql = meta.get("analyst_sql")
         st.code(sql if sql else "(없음)", language="sql")
         st.metric("row_count", str(meta.get("row_count", "")))
-        st.markdown("**rules**")
         st.json(meta.get("rules") or {})
 
 
