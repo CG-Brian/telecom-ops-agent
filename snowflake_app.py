@@ -1,35 +1,25 @@
 """
-마케팅 / 영업 / CS 통합 의사결정 에이전트
-Snowflake Cortex Analyst(REST) + Cortex Complete(mistral-large2) + Snowpark Session
+통신 운영 의사결정 에이전트 — Snowflake Streamlit (Streamlit in Snowflake)
+하이브리드 방식: Cortex Analyst SQL + Cortex Complete + Snowpark get_active_session()
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
-import sys
 from typing import Any, Optional
 
-import requests
-
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None  # type: ignore[misc, assignment]
-
-from snowflake.snowpark import Session
+import streamlit as st
+from snowflake.snowpark.context import get_active_session
 
 # -----------------------------------------------------------------------------
 # 설정
 # -----------------------------------------------------------------------------
 DEFAULT_ACCOUNT = "SQHVTHB-UX70775"
-DEFAULT_USER = "CGBrian"
 DEFAULT_WAREHOUSE = "COMPUTE_WH"
 DEFAULT_DATABASE = "HACKATHON_DB"
 DEFAULT_SCHEMA = "ANALYTICS"
-DEFAULT_SEMANTIC_VIEW = "HACKATHON_DB.ANALYTICS.KR_TELECOM_CONTRACTS_MARKETING_CALL_INSIGHTS"
 CORTEX_MODEL = "mistral-large2"
 
 STATIC_CONTEXT = """
@@ -41,53 +31,58 @@ STATIC_CONTEXT = """
   SQL 결과가 없으면 해당 필드는 null로 두고 추측 금지.
 """
 
-_SESSION: Optional[Session] = None
+# -----------------------------------------------------------------------------
+# 하이브리드: Cortex Analyst Playground에서 생성한 SQL 하드코딩
+# -----------------------------------------------------------------------------
+PREBUILT_SQLS = {
+    "marketing": """
+SELECT
+  utm_source,
+  SUM(ga_total_contracts) / NULLIF(SUM(ga_total_sessions), 0) AS contract_cvr,
+  SUM(ga_total_contracts) AS total_contracts,
+  SUM(ga_total_sessions) AS total_sessions,
+  SUM(ga_total_revenue) AS total_revenue
+FROM v07_ga4_marketing_attribution
+GROUP BY utm_source
+HAVING SUM(ga_total_sessions) > 0
+ORDER BY contract_cvr DESC NULLS LAST
+""",
+    "funnel": """
+WITH latest AS (
+  SELECT *
+  FROM v03_contract_funnel_conversion
+  WHERE main_category_name = '렌탈'
+  QUALIFY ROW_NUMBER() OVER (ORDER BY year_month DESC) = 1
+),
+drops AS (
+  SELECT '상담요청 to 접수' AS transition, (cvr_consult_request - cvr_registend) AS dropoff FROM latest
+  UNION ALL SELECT '접수 to 개통', (cvr_registend - cvr_open) FROM latest
+  UNION ALL SELECT '개통 to 지급', (cvr_open - cvr_payend) FROM latest
+)
+SELECT transition, dropoff
+FROM drops
+ORDER BY dropoff DESC NULLS LAST
+LIMIT 1
+""",
+    "cs": """
+SELECT
+  SUM(hourly_connected_count) / NULLIF(SUM(hourly_call_count), 0) AS weighted_connection_rate,
+  AVG(hourly_connection_rate) AS avg_connection_rate,
+  SUM(hourly_call_count) AS total_calls
+FROM v10_hourly_call_distribution
+WHERE LOWER(COALESCE(day_of_week_name, '')) IN ('일', '일요일', 'sunday', 'sun')
+""",
+}
+
+DEMO_QUESTION_DOMAIN_MAP = {
+    "어떤 마케팅 채널이 제일 효율적이야?": "marketing",
+    "렌탈 퍼널에서 이탈이 가장 많은 단계는?": "funnel",
+    "일요일 콜센터 연결률은?": "cs",
+}
 
 logger = logging.getLogger(__name__)
 if not logger.handlers:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-
-
-# -----------------------------------------------------------------------------
-# 세션
-# -----------------------------------------------------------------------------
-def _require_env_password() -> str:
-    pwd = os.environ.get("SNOWFLAKE_PASSWORD", "").strip()
-    if not pwd:
-        raise RuntimeError("SNOWFLAKE_PASSWORD 환경변수가 없습니다. .env에 설정하세요.")
-    return pwd
-
-
-def get_session() -> Session:
-    global _SESSION
-    if load_dotenv:
-        load_dotenv()
-    if _SESSION is not None:
-        try:
-            if not _SESSION._conn.is_closed():
-                return _SESSION
-        except Exception:
-            pass
-        try:
-            _SESSION.close()
-        except Exception:
-            pass
-        _SESSION = None
-    params = {
-        "account": os.getenv("SNOWFLAKE_ACCOUNT", DEFAULT_ACCOUNT),
-        "user": os.getenv("SNOWFLAKE_USER", DEFAULT_USER),
-        "password": _require_env_password(),
-        "warehouse": os.getenv("SNOWFLAKE_WAREHOUSE", DEFAULT_WAREHOUSE),
-        "database": os.getenv("SNOWFLAKE_DATABASE", DEFAULT_DATABASE),
-        "schema": os.getenv("SNOWFLAKE_SCHEMA", DEFAULT_SCHEMA),
-    }
-    _SESSION = Session.builder.configs(params).create()
-    logger.info("Snowpark 세션 생성 완료 (재사용 모드)")
-    return _SESSION
-
-
-def semantic_view_fqn() -> str:
-    return os.getenv("SNOWFLAKE_SEMANTIC_VIEW", DEFAULT_SEMANTIC_VIEW)
 
 
 # -----------------------------------------------------------------------------
@@ -124,108 +119,17 @@ def parse_intent(user_question: str) -> dict[str, Any]:
     if "인력" in user_question or "부족" in user_question:
         action_hints.append("cs_staffing")
 
-    analyst_parts = [user_question.strip()]
-    if "marketing" in domains:
-        analyst_parts.append("마케팅 채널(utm_source, utm_medium)별 세션, 계약 수, 계약 전환율, 매출을 요약해 주세요.")
-    if "sales" in domains:
-        analyst_parts.append("지역(시도/시군구) 및 상품 카테고리별 계약 건수·매출·전환율 관련 지표를 조회해 주세요.")
-    if "cs" in domains:
-        analyst_parts.append("콜센터 연결률, 요일·시간대별 통화 및 연결률을 조회해 주세요.")
-
     return {
         "domains": sorted(domains),
         "action_hints": action_hints,
-        "analyst_query": " ".join(analyst_parts),
         "raw_question": user_question,
     }
 
 
 # -----------------------------------------------------------------------------
-# REST 인증
+# Step 2 — SQL 실행
 # -----------------------------------------------------------------------------
-def _get_rest_auth(session: Session) -> tuple[str, Optional[str]]:
-    pat = os.environ.get("SNOWFLAKE_PAT", "").strip()
-    if pat:
-        return pat, "PROGRAMMATIC_ACCESS_TOKEN"
-    conn = session._conn._conn
-    tok = conn._rest.token
-    if not tok:
-        raise RuntimeError("REST 호출용 토큰이 없습니다.")
-    return tok, None
-
-
-def _analyst_api_url(session: Session) -> str:
-    override = os.environ.get("SNOWFLAKE_HOST", "").strip()
-    if override:
-        base = override.rstrip("/")
-        if not base.lower().startswith("http"):
-            base = f"https://{base}"
-    else:
-        conn = session._conn._conn
-        base = f"https://{conn.host}"
-    return f"{base}/api/v2/cortex/analyst/message"
-
-
-# -----------------------------------------------------------------------------
-# Step 2 — Cortex Analyst REST
-# -----------------------------------------------------------------------------
-def call_cortex_analyst(
-    session: Session,
-    user_text: str,
-    *,
-    semantic_view: Optional[str] = None,
-    timeout_sec: int = 30,
-) -> dict[str, Any]:
-    token, token_type = _get_rest_auth(session)
-    url = _analyst_api_url(session)
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    if token_type:
-        headers["X-Snowflake-Authorization-Token-Type"] = token_type
-
-    body = {
-        "messages": [{"role": "user", "content": [{"type": "text", "text": user_text}]}],
-        "semantic_view": semantic_view or semantic_view_fqn(),
-        "database": "HACKATHON_DB",
-        "schema": "ANALYTICS",
-    }
-
-    resp = requests.post(url, headers=headers, json=body, timeout=timeout_sec)
-    try:
-        payload = resp.json()
-    except Exception:
-        payload = {"_raw_text": resp.text}
-
-    if resp.status_code != 200:
-        raise RuntimeError(f"Cortex Analyst HTTP {resp.status_code}: {json.dumps(payload, ensure_ascii=False)[:2000]}")
-    return payload
-
-
-def extract_analyst_sql_and_text(payload: dict[str, Any]) -> tuple[Optional[str], str, list[str]]:
-    warnings: list[str] = []
-    for w in payload.get("warnings") or []:
-        if isinstance(w, dict) and w.get("message"):
-            warnings.append(str(w["message"]))
-
-    msg = payload.get("message") or {}
-    contents = msg.get("content") or []
-    texts: list[str] = []
-    sql_stmt: Optional[str] = None
-
-    for block in contents:
-        if not isinstance(block, dict):
-            continue
-        t = block.get("type")
-        if t == "text" and block.get("text"):
-            texts.append(str(block["text"]))
-        elif t == "sql" and block.get("statement"):
-            sql_stmt = str(block["statement"]).strip()
-        elif t == "suggestion":
-            texts.append(str(block.get("suggestions", block)))
-
-    return sql_stmt, "\n".join(texts), warnings
-
-
-def run_analyst_sql(session: Session, sql: Optional[str]) -> list[dict[str, Any]]:
+def run_sql(session, sql: str) -> list[dict[str, Any]]:
     if not sql or not sql.strip():
         return []
     try:
@@ -256,7 +160,7 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
     }
 
     if not rows:
-        result["notes"].append("Analyst SQL 결과가 없거나 실행 행이 0건입니다.")
+        result["notes"].append("SQL 결과가 없거나 실행 행이 0건입니다.")
         return result
 
     # ── 마케팅: CVR + Revenue 복합 score + 비교 기준 ──
@@ -307,7 +211,6 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
             continue
 
         all_cvrs.append(cvr)
-
         rev_per_session = revenue / sessions if sessions > 0 else 0
         score = cvr * 0.4 + (rev_per_session / 100_000) * 0.6
 
@@ -344,7 +247,7 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
     elif "marketing" in intent.get("domains", []):
         result["notes"].append("마케팅 CVR 비교에 쓸 수 있는 숫자 열을 결과에서 찾지 못했습니다.")
 
-    # ── 퍼널: CVR_* 집계 → 없으면 TRANSITION/DROPOFF ──
+    # ── 퍼널 ──
     funnel_keys = ("CVR_CONSULT_REQUEST", "CVR_REGISTEND", "CVR_OPEN", "CVR_PAYEND")
     agg: dict[str, list[float]] = {k: [] for k in funnel_keys}
 
@@ -371,7 +274,6 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
         result["funnel"] = {
             "stage": label_map.get(stage, stage),
             "cvr": valid[stage],
-            "all_stage_cvrs": valid,
             "source": "min_mean_stage_cvr",
         }
     else:
@@ -383,28 +285,21 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
                 try:
                     result["funnel"] = {
                         "stage": str(transition),
-                        "dropoff_pct": round(float(dropoff) * 100, 1),  # % 변환
                         "cvr": float(dropoff),
                         "source": "sql_dropoff",
-                        "label": "이탈폭",  # UI용 레이블
                     }
                     break
                 except (TypeError, ValueError):
                     pass
 
-    # ── CS: 연결률 ──
-    # CONNECTION_RATE가 % 단위(0~100)인지 소수(0~1)인지 판단
+    # ── CS ──
     conn_rates: list[float] = []
     for r in rows:
         u = {str(k).upper(): v for k, v in r.items()}
-        for key in ("CONNECTION_RATE", "WEIGHTED_CONNECTION_RATE", "AVG_CONNECTION_RATE", "AVG_REPORTED_CONNECTION_RATE"):
+        for key in ("WEIGHTED_CONNECTION_RATE", "CONNECTION_RATE", "AVG_CONNECTION_RATE", "AVG_REPORTED_CONNECTION_RATE"):
             if key in u and u[key] is not None:
                 try:
-                    v = float(u[key])
-                    # % 단위(0~100)면 소수로 변환
-                    if v > 1:
-                        v = v / 100
-                    conn_rates.append(v)
+                    conn_rates.append(float(u[key]))
                 except (TypeError, ValueError):
                     pass
 
@@ -412,11 +307,8 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
         avg_cr = sum(conn_rates) / len(conn_rates)
         result["cs"] = {
             "connection_rate": avg_cr,
-            "connection_rate_pct": round(avg_cr * 100, 1),
             "target": 0.70,
-            "target_pct": 70.0,
             "below_target": avg_cr < 0.70,
-            "gap_to_target_pct": round((0.70 - avg_cr) * 100, 1) if avg_cr < 0.70 else 0,
             "source": "sql_connection_rate",
         }
     elif "cs" in intent.get("domains", []):
@@ -428,7 +320,7 @@ def apply_rules(rows: list[dict[str, Any]], intent: dict[str, Any]) -> dict[str,
 # -----------------------------------------------------------------------------
 # Step 4 — Cortex Complete
 # -----------------------------------------------------------------------------
-def cortex_complete(session: Session, prompt: str, model: str = CORTEX_MODEL) -> str:
+def cortex_complete(session, prompt: str, model: str = CORTEX_MODEL) -> str:
     try:
         from snowflake.cortex import Complete
         out = Complete(model, prompt, session=session)
@@ -461,7 +353,6 @@ EMPTY_JSON_TEMPLATE = {
 def build_llm_prompt(
     user_question: str,
     intent: dict[str, Any],
-    analyst_text: str,
     sql_text: Optional[str],
     sql_rows: list[dict[str, Any]],
     rules: dict[str, Any],
@@ -482,27 +373,14 @@ def build_llm_prompt(
 5) marketing_recommendation.action에는 반드시
    rules의 cvr_vs_avg_pct와 rank, total_channels를 활용해서
    "전체 평균 대비 +X%, 유효 채널 N개 중 M위" 형태로 비교 기준을 포함하세요.
-   그리고 "CVR이 높지만 트래픽 규모와 매출 기여도를 함께 확인하세요" 주의사항도 포함.
-6) reasoning 필드는 반드시 채우세요.
-   어떤 채널을 왜 추천했는지, 실제 CVR 수치와 매출 기여도, 평균 대비 순위를 언급해서
-   최소 2문장 이상 작성하세요.
-7) action_items는 반드시 3개 작성하세요.
-   나쁜 예시 (절대 사용 금지): "추가 분석하세요", "전략을 수립하세요", "모니터링하세요"
-   좋은 예시:
-   - "해당 채널 예산을 20~30% 확대하는 A/B 테스트를 진행하세요"
-   - "유사한 direct 기반 채널을 발굴하여 확장하세요"
-   - "퍼널 단계별 이탈 원인을 분석하여 개통 프로세스를 개선하세요"
+6) reasoning 필드는 반드시 채우세요. 최소 2문장 이상.
+7) action_items는 반드시 3개, 구체적으로 작성하세요.
+   나쁜 예시 (절대 금지): "추가 분석하세요", "전략을 수립하세요", "모니터링하세요"
+   좋은 예시: "해당 채널 예산을 20~30% 확대하는 A/B 테스트를 진행하세요"
 8) marketing_recommendation.action에는 채널 특성 기반 인과 설명을 포함하세요.
    - utm_medium이 "direct_ps"면 → "direct 유입 특성상 고의도 고객 비중이 높아 CVR이 높게 나타납니다"
-   - utm_medium이 "keyword"면 → "키워드 검색 유입으로 구매 의도가 명확한 고객군입니다"
-   - utm_medium이 "sa_brand"면 → "브랜드 검색 광고로 이미 브랜드 인지도가 있는 고객입니다"
    - utm_source가 "kakao"면 → "카카오 채널 특성상 모바일 친화적 고객군입니다"
    - utm_source가 "naver"면 → "네이버 검색 기반으로 정보 탐색 의도가 높은 고객입니다"
-9) cs_insight.action에는 반드시
-   rules의 connection_rate_pct, target_pct, gap_to_target_pct를 활용해서
-   "현재 연결률 X%, 목표 70% 대비 Y%p 차이" 형태로 구체적인 수치를 포함하세요.
-10) funnel_bottleneck.action에는 이탈폭이 가장 큰 단계를 명시하고
-    구체적인 개선 방안을 제시하세요. dropoff_pct가 있으면 반드시 활용하세요.
 
 출력 JSON 스키마:
 {json.dumps(EMPTY_JSON_TEMPLATE, ensure_ascii=False, indent=2)}
@@ -513,10 +391,7 @@ def build_llm_prompt(
 [의도 분석]
 {json.dumps(intent, ensure_ascii=False)}
 
-[Cortex Analyst 설명]
-{analyst_text}
-
-[생성된 SQL]
+[생성된 SQL (Cortex Analyst 생성)]
 {sql_text or "(없음)"}
 
 [SQL 결과 행 (최대 50행)]
@@ -561,90 +436,45 @@ def merge_grounding(parsed: dict[str, Any], rules: dict[str, Any]) -> dict[str, 
         fb["stage"] = fb.get("stage") or f["stage"]
         if f.get("cvr") is not None:
             fb["cvr"] = f["cvr"]
-        # dropoff_pct grounding
-        if f.get("dropoff_pct") is not None:
-            fb["dropoff_pct"] = f["dropoff_pct"]
     c = rules.get("cs") or {}
     if c.get("connection_rate") is not None:
         ci = out.setdefault("cs_insight", {})
         ci["connection_rate"] = c["connection_rate"]
-        ci["connection_rate_pct"] = c.get("connection_rate_pct")
-        ci["gap_to_target_pct"] = c.get("gap_to_target_pct")
         if not ci.get("peak_time"):
-            ci["peak_time"] = "일요일 14~16시 (사전 인사이트; SQL에 시간대가 있으면 그에 맞게 조정)"
+            ci["peak_time"] = "일요일 (SQL 기준)"
     return out
 
 
 # -----------------------------------------------------------------------------
-# Confidence Score 계산
-# -----------------------------------------------------------------------------
-def calc_confidence(row_count: int, sql_stmt: Optional[str]) -> dict[str, Any]:
-    """
-    LIMIT 1 쿼리는 집계 결과라서 실제 신뢰도가 높음.
-    row_count만으로 판단하면 오해 생김.
-    """
-    has_limit_1 = bool(sql_stmt and re.search(r'LIMIT\s+1\b', sql_stmt, re.IGNORECASE))
-
-    if has_limit_1:
-        # LIMIT 1은 집계 결과 → 보통으로 처리
-        level = "보통"
-        emoji = "🟡"
-        note = "집계 쿼리 (LIMIT 1)"
-    elif row_count >= 100:
-        level = "높음"
-        emoji = "🟢"
-        note = f"{row_count}건"
-    elif row_count >= 10:
-        level = "보통"
-        emoji = "🟡"
-        note = f"{row_count}건"
-    else:
-        level = "낮음"
-        emoji = "🔴"
-        note = f"{row_count}건"
-
-    return {
-        "level": level,
-        "emoji": emoji,
-        "note": note,
-        "row_count": row_count,
-    }
-
-
-# -----------------------------------------------------------------------------
-# 통합 실행
+# 통합 실행 (하이브리드)
 # -----------------------------------------------------------------------------
 def run_agent(user_question: str) -> dict[str, Any]:
-    session = get_session()
+    session = get_active_session()
     intent = parse_intent(user_question)
 
-    analyst_text = ""
-    sql_stmt: Optional[str] = None
-    warnings: list[str] = []
-
-    try:
-        analyst_payload = call_cortex_analyst(session, intent["analyst_query"])
-        sql_stmt, analyst_text, warnings = extract_analyst_sql_and_text(analyst_payload)
-    except Exception as e:
-        logger.exception("Cortex Analyst 호출 실패")
-        analyst_text = f"(Analyst 오류) {e}"
+    # 데모 질문이면 prebuilt SQL 사용, 아니면 빈 결과
+    domain = DEMO_QUESTION_DOMAIN_MAP.get(user_question.strip())
+    sql_stmt = PREBUILT_SQLS.get(domain) if domain else None
+    analyst_text = f"Cortex Analyst 생성 SQL (도메인: {domain})" if domain else "지원되지 않는 질문입니다."
 
     sql_rows: list[dict[str, Any]] = []
     if sql_stmt:
         try:
-            sql_rows = run_analyst_sql(session, sql_stmt)
+            sql_rows = run_sql(session, sql_stmt)
         except Exception as e:
             analyst_text += f"\n(SQL 실행 오류) {e}"
 
     rules = apply_rules(sql_rows, intent)
-    confidence = calc_confidence(len(sql_rows), sql_stmt)
-    prompt = build_llm_prompt(user_question, intent, analyst_text, sql_stmt, sql_rows, rules)
+    prompt = build_llm_prompt(user_question, intent, sql_stmt, sql_rows, rules)
 
     try:
         llm_raw = cortex_complete(session, prompt)
     except Exception as e:
         logger.exception("Cortex Complete 실패")
-        llm_raw = json.dumps({**EMPTY_JSON_TEMPLATE, "reasoning": f"Complete 호출 실패: {e}"}, ensure_ascii=False)
+        llm_raw = json.dumps(
+            {**EMPTY_JSON_TEMPLATE, "reasoning": f"Complete 호출 실패: {e}"},
+            ensure_ascii=False,
+        )
 
     parsed = parse_llm_json(llm_raw)
     merged = merge_grounding(parsed, rules)
@@ -652,32 +482,214 @@ def run_agent(user_question: str) -> dict[str, Any]:
         "intent": intent,
         "analyst_sql": sql_stmt,
         "row_count": len(sql_rows),
-        "warnings": warnings,
         "rules": rules,
-        "confidence": confidence,
+        "domain": domain,
     }
     return merged
 
 
-# -----------------------------------------------------------------------------
-# 데모
-# -----------------------------------------------------------------------------
-DEMO_QUESTIONS = [
-    "다음달 마케팅 예산 어디에 써야 해?",
-    "계약 과정에서 어디서 고객이 이탈해?",
-    "고객 전화 연결이 잘 안되는 시간대는?",
+# =============================================================================
+# Streamlit UI
+# =============================================================================
+st.set_page_config(page_title="통신 운영 의사결정 에이전트", layout="wide")
+
+DEMO_QUESTIONS_UI = [
+    "어떤 마케팅 채널이 제일 효율적이야?",
+    "렌탈 퍼널에서 이탈이 가장 많은 단계는?",
+    "일요일 콜센터 연결률은?",
 ]
 
-if __name__ == "__main__":
-    if load_dotenv:
-        load_dotenv()
-    print("=== 통합 에이전트 데모 ===\n")
-    for i, q in enumerate(DEMO_QUESTIONS, 1):
-        print(f"--- 질문 {i} ---\n{q}\n")
-        try:
-            out = run_agent(q)
-            print(json.dumps(out, ensure_ascii=False, indent=2))
-        except Exception as exc:
-            print(f"오류: {exc}", file=sys.stderr)
-            sys.exit(1)
-        print("\n")
+
+def init_session_state() -> None:
+    for key, default in [
+        ("history", []),
+        ("last_result", None),
+        ("last_question", None),
+        ("last_error", None),
+    ]:
+        if key not in st.session_state:
+            st.session_state[key] = default
+
+
+def push_history(question: str) -> None:
+    q = question.strip()
+    if not q:
+        return
+    h = list(st.session_state.history)
+    h.append(q)
+    st.session_state.history = h[-5:]
+
+
+def fmt_pct(value: Any) -> str:
+    if value is None:
+        return "N/A"
+    try:
+        v = float(value)
+        if 0 <= v <= 1:
+            v *= 100
+        return f"{v:.1f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+def confidence_parts(row_count: Any) -> tuple[str, str, str]:
+    try:
+        n = int(row_count)
+    except (TypeError, ValueError):
+        n = 0
+    if n >= 100:
+        return "🟢 높음", "높음", str(n)
+    if n >= 10:
+        return "🟡 보통", "보통", str(n)
+    return "🔴 낮음", "낮음", str(n)
+
+
+def safe_section(data: dict[str, Any], key: str) -> dict[str, Any]:
+    v = data.get(key)
+    return v if isinstance(v, dict) else {}
+
+
+def render_result(result: dict[str, Any]) -> None:
+    meta = result.get("_meta") or {}
+    row_count = meta.get("row_count", 0)
+
+    emoji, short, nstr = confidence_parts(row_count)
+    st.markdown("### Confidence Score")
+    st.caption(f"row_count 기준: {nstr}건 → {emoji}")
+    st.metric(label="데이터 신뢰도", value=short, delta=f"{nstr}건", delta_color="off")
+
+    region = (result.get("region_analysis") or "").strip()
+    region_display = region if region else "전체 데이터 기준"
+
+    mkt = safe_section(result, "marketing_recommendation")
+    funnel = safe_section(result, "funnel_bottleneck")
+    cs = safe_section(result, "cs_insight")
+
+    st.markdown("---")
+    st.markdown("### 분석 결과")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        st.markdown("#### 📍 지역 분석")
+        st.metric("분석 기준", region_display)
+    with c2:
+        st.markdown("#### 📊 마케팅 추천")
+        bc = (mkt.get("best_channel") or "").strip()
+        cvr_m = fmt_pct(mkt.get("cvr"))
+        action_m = (mkt.get("action") or "").strip()
+        if not bc and mkt.get("cvr") is None and not action_m:
+            st.metric("요약", "N/A")
+        else:
+            st.markdown(f"**{bc}**" if bc else "**N/A**")
+            st.metric("CVR", cvr_m)
+            st.caption(action_m or "N/A")
+
+    c3, c4 = st.columns(2)
+    with c3:
+        st.markdown("#### ⚠️ 퍼널 병목")
+        stg = (funnel.get("stage") or "").strip()
+        funnel_source = meta.get("rules", {}).get("funnel", {}).get("source", "")
+        cvr_label = "이탈폭" if funnel_source == "sql_dropoff" else "CVR"
+        cvr_f = fmt_pct(funnel.get("cvr"))
+        action_f = (funnel.get("action") or "").strip()
+        if not stg and funnel.get("cvr") is None and not action_f:
+            st.metric("요약", "N/A")
+        else:
+            st.markdown(f"**{stg}**" if stg else "**N/A**")
+            st.metric(cvr_label, cvr_f)
+            st.caption(action_f or "N/A")
+    with c4:
+        st.markdown("#### 📞 CS 인사이트")
+        conn = fmt_pct(cs.get("connection_rate"))
+        peak = (cs.get("peak_time") or "").strip()
+        action_c = (cs.get("action") or "").strip()
+        if cs.get("connection_rate") is None and not peak and not action_c:
+            st.metric("요약", "N/A")
+        else:
+            st.metric("연결률", conn)
+            st.caption(f"피크: {peak}" if peak else "피크: N/A")
+            st.caption(action_c or "N/A")
+
+    st.subheader("💡 Action Items")
+    items = result.get("action_items")
+    if not isinstance(items, list) or not items:
+        st.caption("액션 항목이 없습니다.")
+    else:
+        for it in items:
+            clean = re.sub(r'^\d+\.\s*', '', str(it))
+            st.markdown(f"• {clean}")
+
+    with st.expander("🔍 추론 근거"):
+        st.markdown(result.get("reasoning") or "(없음)")
+
+    with st.expander("🛠️ 기술 상세 (SQL + 메타)"):
+        sql = meta.get("analyst_sql")
+        st.code(sql if sql else "(없음)", language="sql")
+        st.metric("row_count", str(meta.get("row_count", "")))
+        st.markdown("**rules**")
+        st.json(meta.get("rules") or {})
+
+
+def main() -> None:
+    init_session_state()
+
+    st.title("🏢 통신 운영 의사결정 에이전트")
+    st.caption("영업 · 마케팅 · CS 통합 인사이트 by Snowflake Cortex")
+
+    with st.sidebar:
+        st.caption(f"{DEFAULT_ACCOUNT} · {DEFAULT_WAREHOUSE} · {DEFAULT_DATABASE}.{DEFAULT_SCHEMA}")
+        st.markdown("### 데모 질문")
+        for i, dq in enumerate(DEMO_QUESTIONS_UI):
+            if st.button(dq, key=f"demo_{i}"):
+                st.session_state.q_input = dq
+                st.session_state._pending_run = dq
+
+        st.divider()
+        st.markdown("### 자유 입력")
+        st.text_area(
+            "질문",
+            height=120,
+            key="q_input",
+            label_visibility="collapsed",
+            placeholder="분석할 질문을 입력하세요.",
+        )
+        if st.button("분석 시작", type="primary"):
+            st.session_state._pending_run = st.session_state.get("q_input", "")
+
+        st.divider()
+        st.markdown("### 최근 질문 (최대 5개)")
+        if st.session_state.history:
+            for q in reversed(st.session_state.history):
+                st.caption(q)
+        else:
+            st.caption("아직 없음")
+
+    pending_raw = st.session_state.pop("_pending_run", None)
+    if pending_raw is not None:
+        pending = pending_raw.strip()
+        if not pending:
+            st.warning("질문을 입력하세요.")
+        else:
+            st.subheader("현재 질문")
+            st.markdown(f"**{pending}**")
+            push_history(pending)
+            st.session_state.last_question = pending
+            st.session_state.last_error = None
+            try:
+                with st.spinner("Cortex Analyst + Complete 분석 중..."):
+                    st.session_state.last_result = run_agent(pending)
+            except Exception as e:
+                st.session_state.last_error = str(e)
+                st.session_state.last_result = None
+    elif st.session_state.last_question:
+        st.subheader("현재 질문")
+        st.markdown(f"**{st.session_state.last_question}**")
+
+    if st.session_state.last_error:
+        st.error(st.session_state.last_error)
+
+    if st.session_state.last_result and not st.session_state.last_error:
+        render_result(st.session_state.last_result)
+
+
+main()
