@@ -10,27 +10,6 @@
 
 ---
 
-## 🖥️ Demo UI
-
-3개의 질문만으로 마케팅, 퍼널, CS 전 영역의 의사결정을 수행합니다.
-
-### 1) Marketing Decision
-
-marketing demo
-
-### 2) Funnel Bottleneck Detection
-
-funnel demo
-
-### 3) CS Optimization Insight
-
-cs demo
-
-> Snowflake 데모 앱은 검증된 3개 시나리오를 안정적으로 재현하는 시연용 인터페이스입니다.
-> 프로젝트의 핵심 의사결정 로직은 로컬의 `agent_v2.py`에서 멀티 도메인 reasoning 형태로 확장됩니다.
-
----
-
 ## ❗ Problem
 
 렌탈/통신 업체의 마케팅·영업·CS 부서는 **각각 따로 데이터를 보고 의사결정**합니다.
@@ -47,6 +26,32 @@ CS팀      →  콜센터 연결률만 봄
 - CS 인력 과소/과다 배치로 고객 이탈
 - 퍼널 병목을 몰라서 계약 전환율 감소
 - **→ 실제 매출 손실로 이어짐**
+
+---
+
+## 🖥️ Demo UI
+
+👉 아래는 실제 의사결정 결과 예시입니다.
+
+3개의 질문만으로 마케팅, 퍼널, CS 전 영역의 의사결정을 수행합니다.
+
+### 1) Marketing Decision
+
+
+
+### 2) Funnel Bottleneck Detection
+
+
+
+### 3) CS Optimization Insight
+
+cs demo
+
+> **Demo UI = Interface** / **agent_v2.py = Brain**
+>
+> Snowflake Demo UI는 안정적인 시연을 위해 검증된 SQL 기반으로 구성된 인터페이스입니다.
+> 실제 핵심 의사결정 로직은 `agent_v2.py`에서 수행되며,
+> 멀티 도메인 reasoning을 통해 더 복잡한 의사결정을 처리합니다.
 
 ---
 
@@ -74,6 +79,30 @@ CVR:       27.1%
 - 해당 채널 예산 20~30% 확대 A/B 테스트 진행
 - 유사한 direct 기반 채널 발굴 및 확장
 - 퍼널 접수→개통 단계 이탈 원인 분석
+
+👉 그렇다면 이 의사결정은 어떻게 만들어질까?
+
+---
+
+## 🧠 Advanced Decision Engine (`agent_v2.py`)
+
+본 프로젝트의 핵심은 단순 질의응답이 아닌, **멀티 도메인 의사결정 에이전트**입니다.
+
+```
+Demo UI (Stable Layer)          agent_v2.py (Decision Engine)
+──────────────────────    vs    ──────────────────────────────
+검증된 3개 시나리오              자연어 질문 → 자유 분석
+단일 도메인 응답                 마케팅 + 퍼널 + CS 동시 분석
+SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
+안정성 최우선                    의사결정 품질 최우선
+```
+
+`agent_v2.py`가 수행하는 것:
+
+- **멀티 도메인 동시 분석** — 마케팅 / 퍼널 / CS 데이터를 한 번에
+- **Conflict Detection** — "유입은 양호하나 전환에서 손실" 자동 감지
+- **영향도 기반 우선순위** — 1순위부터 3순위까지 자동 결정
+- **즉시 실행 가능한 액션** — 구체적 대응 방안 자동 생성
 
 ---
 
@@ -142,11 +171,11 @@ CVR 40% + Revenue per Session 60% 복합 score
 ### 평가 기준
 
 
-| 항목                          | 지표                                  | 의미                         |
-| --------------------------- | ----------------------------------- | -------------------------- |
-| **Recommendation Accuracy** | Top-1 / Top-3 Accuracy              | AI가 실제 최적 채널을 맞게 선택했는가     |
-| **Numeric Grounding**       | Hallucination Rate (threshold: 2%p) | LLM이 생성한 수치가 실제 데이터와 일치하는가 |
-| **Business Impact**         | CVR Uplift / Revenue Uplift         | 추천 채널이 평균 대비 얼마나 높은 성과인가   |
+| 항목                          | 지표                                  | 의미                          |
+| --------------------------- | ----------------------------------- | --------------------------- |
+| **Recommendation Accuracy** | Top-1 / Top-3 Accuracy              | AI가 실제 최적 채널을 맞게 선택했는가      |
+| **Numeric Grounding**       | Hallucination Rate (threshold: 2%p) | LLM이 생성한 수치가 실제 데이터와 일치하는가  |
+| **Business Impact**         | CVR Uplift / Revenue Uplift         | 추천 채널이 전체 평균 대비 얼마나 높은 성과인가 |
 
 
 ### 결과 요약
@@ -167,7 +196,7 @@ CVR 40% + Revenue per Session 60% 복합 score
 | Method         | Top-1 Accuracy | 비고                     |
 | -------------- | -------------- | ---------------------- |
 | Random 추천      | ~1%            | 무작위 선택                 |
-| CVR Only       | **0%**         | 소규모 채널 과대평가            |
+| CVR Only       | **0%**         | 소규모 채널 과대평가 문제         |
 | **Our System** | **33%**        | CVR + Revenue 복합 score |
 
 
