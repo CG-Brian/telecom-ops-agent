@@ -37,11 +37,11 @@ CS팀      →  콜센터 연결률만 봄
 
 ### 1) Marketing Decision
 
-
+<img src="./assets/marketing_demo.gif" width="800"/>
 
 ### 2) Funnel Bottleneck Detection
 
-
+<img src="./assets/funnel_demo.png" width="800"/>
 
 ### 3) CS Optimization Insight
 
@@ -111,6 +111,8 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 **질문:**
 
 > 지금 성과를 올리려면 뭐부터 해야 해?
+
+<img src="./assets/multi_domain_demo_1.gif" width="800"/>
 
 **결과:**
 
