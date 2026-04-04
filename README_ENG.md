@@ -33,13 +33,21 @@ This fragmentation causes:
 
 3 questions covering decisions across Marketing, Funnel, and CS.
 
+The UI is currently shown in Korean, but the workflow demonstrates:
+- marketing channel recommendation
+- funnel bottleneck detection
+- CS optimization insight
+
 ### 1) Marketing Decision
+Recommends the highest-impact marketing channel
 <img src="./assets/marketing_demo.gif" width="800"/>
 
 ### 2) Funnel Bottleneck Detection
+Identifies the main funnel bottleneck
 <img src="./assets/funnel_demo.png" width="800"/>
 
 ### 3) CS Optimization Insight
+Generates actionable CS optimization suggestions
 ![cs demo](./assets/demo_cs.png)
 
 > **Demo UI = Interface** / **agent_v2.py = Brain**
