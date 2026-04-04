@@ -1,6 +1,7 @@
 # 🏢 통신 운영 의사결정 AI 에이전트
 
 ## 🧠 AI가 마케팅 예산을 직접 결정합니다
+
 173개 채널 중 어디에 돈을 써야 하는지 자동으로 선택하는 AI
 
 > 마케팅 / 영업 / CS 데이터를 통합해 하나의 의사결정을 내리는 AI
@@ -14,13 +15,16 @@
 3개의 질문만으로 마케팅, 퍼널, CS 전 영역의 의사결정을 수행합니다.
 
 ### 1) Marketing Decision
-![marketing demo](./assets/demo_marketing.png)
+
+marketing demo
 
 ### 2) Funnel Bottleneck Detection
-![funnel demo](./assets/demo_funnel.png)
+
+funnel demo
 
 ### 3) CS Optimization Insight
-![cs demo](./assets/demo_cs.png)
+
+cs demo
 
 > Snowflake 데모 앱은 검증된 3개 시나리오를 안정적으로 재현하는 시연용 인터페이스입니다.
 > 프로젝트의 핵심 의사결정 로직은 로컬의 `agent_v2.py`에서 멀티 도메인 reasoning 형태로 확장됩니다.
@@ -38,6 +42,7 @@ CS팀      →  콜센터 연결률만 봄
 ```
 
 이 단절이 만드는 문제:
+
 - 마케팅 예산을 잘못된 채널에 낭비
 - CS 인력 과소/과다 배치로 고객 이탈
 - 퍼널 병목을 몰라서 계약 전환율 감소
@@ -50,19 +55,22 @@ CS팀      →  콜센터 연결률만 봄
 **질문:** "어떤 마케팅 채널이 제일 효율적이야?"
 
 **결과:**
+
 ```
 최적 채널: nc_money / direct_ps
 CVR:       27.1%
 전체 평균 대비: +289.8%
-173개 채널 중: 2위
+173개 채널 중: 상위권 (Top-3)
 매출 기여:  30,651,037원 / 872세션
 ```
 
 **인사이트:**
+
 - direct 유입 특성상 고의도 고객 비중이 높아 CVR이 높게 나타남
 - CVR + 매출 기여도를 동시에 고려한 복합 분석 결과
 
 **Action:**
+
 - 해당 채널 예산 20~30% 확대 A/B 테스트 진행
 - 유사한 direct 기반 채널 발굴 및 확장
 - 퍼널 접수→개통 단계 이탈 원인 분석
@@ -72,9 +80,11 @@ CVR:       27.1%
 ### 🧠 Multi-Domain Decision Example
 
 **질문:**
+
 > 지금 성과를 올리려면 뭐부터 해야 해?
 
 **결과:**
+
 ```
 1순위: 퍼널 병목 개선 (상담요청 CVR 29.4% → 직접 원인)
 2순위: 고효율 채널 예산 확대 (nc_money +290% → 성장 기회)
@@ -88,12 +98,14 @@ CVR:       27.1%
 
 ## 📈 Impact
 
-| | 기존 방식 | AI 에이전트 |
-|--|---------|------------|
-| 데이터 통합 | 부서별 분리 | 마케팅+영업+CS 통합 |
-| 의사결정 시간 | 수 시간 | 수 분 |
-| 채널 비교 | 담당자 경험 의존 | 173개 전체 정량 비교 |
-| 액션 도출 | 회의 후 결정 | 즉시 실행 가능한 액션 제공 |
+
+|         | 기존 방식     | AI 에이전트         |
+| ------- | --------- | --------------- |
+| 데이터 통합  | 부서별 분리    | 마케팅+영업+CS 통합    |
+| 의사결정 시간 | 수 시간      | 수 분             |
+| 채널 비교   | 담당자 경험 의존 | 173개 전체 정량 비교   |
+| 액션 도출   | 회의 후 결정   | 즉시 실행 가능한 액션 제공 |
+
 
 → **빠른 예산 재배분 → 매출 최적화**
 
@@ -102,6 +114,7 @@ CVR:       27.1%
 ## ⚠️ Baseline vs Ours
 
 **LLM Only 방식:**
+
 ```
 가장 높은 CVR 채널 선택
 → tips_capsule (CVR 34.7%, 세션 1,031건)
@@ -109,6 +122,7 @@ CVR:       27.1%
 ```
 
 **Our System:**
+
 ```
 CVR 40% + Revenue per Session 60% 복합 score
 → nc_money/direct_ps (CVR 27.1%, 세션 872건)
@@ -116,6 +130,51 @@ CVR 40% + Revenue per Session 60% 복합 score
 ```
 
 > Rule-based grounding으로 LLM 환각을 제거하고 실제 데이터 기반으로 보정
+
+> → 해당 차이는 실제 평가에서도 확인되며, CVR-only baseline 대비 더 높은 추천 정확도를 보였습니다.
+
+---
+
+## 📊 Evaluation (KPI 기반 검증)
+
+본 프로젝트는 단순 데모가 아니라, 추천 정확도 / 숫자 신뢰도 / 비즈니스 임팩트 기준으로 시스템을 정량적으로 검증했습니다.
+
+### 평가 기준
+
+
+| 항목                          | 지표                                  | 의미                         |
+| --------------------------- | ----------------------------------- | -------------------------- |
+| **Recommendation Accuracy** | Top-1 / Top-3 Accuracy              | AI가 실제 최적 채널을 맞게 선택했는가     |
+| **Numeric Grounding**       | Hallucination Rate (threshold: 2%p) | LLM이 생성한 수치가 실제 데이터와 일치하는가 |
+| **Business Impact**         | CVR Uplift / Revenue Uplift         | 추천 채널이 평균 대비 얼마나 높은 성과인가   |
+
+
+### 결과 요약
+
+
+| Metric             | Result                    |
+| ------------------ | ------------------------- |
+| Top-1 Accuracy     | 33% (1/3 케이스)             |
+| Top-3 Accuracy     | 67% (2/3 케이스)             |
+| Hallucination Rate | **0%** (임계값 2%p 기준)       |
+| CVR Uplift         | **3.9x** (추천 채널 vs 전체 평균) |
+| Revenue Uplift     | **4.4x**                  |
+
+
+### Baseline 비교
+
+
+| Method         | Top-1 Accuracy | 비고                     |
+| -------------- | -------------- | ---------------------- |
+| Random 추천      | ~1%            | 무작위 선택                 |
+| CVR Only       | **0%**         | 소규모 채널 과대평가            |
+| **Our System** | **33%**        | CVR + Revenue 복합 score |
+
+
+> 단순 CVR 기준 선택은 low-volume 채널을 과대평가하는 문제를 보였으며,
+> 본 시스템은 Revenue를 함께 고려해 더 안정적인 추천을 제공합니다.
+
+> ⚠️ 본 평가는 오프라인 데이터 기반이며 실제 매출 증가를 보장하지 않습니다.
 
 ---
 
@@ -169,6 +228,7 @@ Snowflake Streamlit 데모에서는 시연 안정성을 위해
 ## 🏗️ Architecture
 
 ### 1) Stable Demo Layer (Snowflake Streamlit)
+
 ```
 Verified Questions (3개 시나리오)
         ↓
@@ -184,6 +244,7 @@ Streamlit in Snowflake UI
 ```
 
 ### 2) Advanced Reasoning Layer (Local `agent_v2.py`)
+
 ```
 Natural Language Question
         ↓
@@ -204,12 +265,14 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 
 ## ❄️ Why Snowflake Cortex?
 
-| 기능 | 역할 |
-|------|------|
-| **Cortex Analyst** | 자연어 질문 → SQL 자동 생성 |
-| **Cortex Complete** | 데이터 기반 인사이트 + 액션 생성 |
-| **Snowpark** | 대규모 데이터 실시간 조회 |
-| **Streamlit in Snowflake** | 플랫폼 내 완결된 UI |
+
+| 기능                         | 역할                  |
+| -------------------------- | ------------------- |
+| **Cortex Analyst**         | 자연어 질문 → SQL 자동 생성  |
+| **Cortex Complete**        | 데이터 기반 인사이트 + 액션 생성 |
+| **Snowpark**               | 대규모 데이터 실시간 조회      |
+| **Streamlit in Snowflake** | 플랫폼 내 완결된 UI        |
+
 
 → **단순 LLM이 아닌 "Snowflake 위에서 완결되는 데이터 AI 시스템"**
 
@@ -221,17 +284,20 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 - 단순 LLM ❌ → **Rule-based grounding으로 hallucination 제거** ✅
 - 단순 분석 ❌ → **즉시 실행 가능한 Action 3개 자동 제공** ✅
 - 단일 부서 ❌ → **마케팅 + 영업 + CS 통합 분석** ✅
+- 단순 데모 ❌ → **정량적 평가 기반 검증된 시스템** ✅
 
 ---
 
 ## 💰 Why It Matters
 
 잘못된 채널에 예산을 쓰면:
+
 - 광고비 낭비 (CVR 낮은 채널에 집중)
 - 전환율 감소 (퍼널 병목 방치)
 - 고객 이탈 (CS 연결률 미달)
 
 **이 시스템은:**
+
 - 고의도 고객 채널 자동 식별
 - ROI 기반 예산 재배분 제안
 - 매출 극대화 의사결정 지원
@@ -240,11 +306,13 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 
 ## 🔥 핵심 인사이트 (EDA)
 
-| 도메인 | 발견 | 임팩트 |
-|--------|------|--------|
-| 📊 마케팅 | 채널별 CVR **최대 4,000배 격차** | 예산 재배분으로 즉시 효과 |
-| ⚠️ 퍼널 | **"접수→개통" 단계** 최대 이탈 병목 | 프로세스 개선으로 전환율 향상 |
-| 📞 CS | 수신 연결률 **55.8%**, 목표 70% 미달 | 인력 배치 최적화 필요 |
+
+| 도메인    | 발견                          | 임팩트              |
+| ------ | --------------------------- | ---------------- |
+| 📊 마케팅 | 채널별 CVR **최대 4,000배 격차**    | 예산 재배분으로 즉시 효과   |
+| ⚠️ 퍼널  | **"접수→개통" 단계** 최대 이탈 병목     | 프로세스 개선으로 전환율 향상 |
+| 📞 CS  | 수신 연결률 **55.8%**, 목표 70% 미달 | 인력 배치 최적화 필요     |
+
 
 ---
 
@@ -289,6 +357,7 @@ telecom-ops-agent/
 │                          #   (reasoning / conflict detection / priority ranking)
 ├── streamlit_app.py       # 로컬 Streamlit (agent_v2 연결)
 ├── snowflake_app.py       # Streamlit in Snowflake 데모 앱 (검증 시나리오)
+├── eval.py                # KPI 기반 시스템 평가 (Accuracy / Hallucination / Uplift)
 └── README.md
 ```
 
@@ -307,25 +376,29 @@ telecom-ops-agent/
 
 **아정당 — 한국 통신 구독·계약 분석 데이터** (Snowflake Marketplace)
 
-| 뷰 | 설명 | 활용 |
-|----|------|------|
-| V01 | 월별·지역별 계약 통계 | 영업 트렌드 분석 |
-| V03 | 계약 퍼널 단계별 전환율 | 병목 탐지 |
-| V07 | GA4 마케팅 채널별 성과 | 채널 최적화 |
-| V09 | 월별 콜센터 통계 | CS 성과 추적 |
-| V10 | 시간대별 콜 분포 | 인력 배치 최적화 |
+
+| 뷰   | 설명             | 활용        |
+| --- | -------------- | --------- |
+| V01 | 월별·지역별 계약 통계   | 영업 트렌드 분석 |
+| V03 | 계약 퍼널 단계별 전환율  | 병목 탐지     |
+| V07 | GA4 마케팅 채널별 성과 | 채널 최적화    |
+| V09 | 월별 콜센터 통계      | CS 성과 추적  |
+| V10 | 시간대별 콜 분포      | 인력 배치 최적화 |
+
 
 ---
 
 ## 🚀 실행 방법
 
 ### 로컬
+
 ```bash
 pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
 ### Snowflake Streamlit
+
 ```
 Snowsight → Projects → Streamlit → New App
 snowflake_app.py 내용 붙여넣기 → Run
@@ -352,19 +425,21 @@ snowflake_app.py 내용 붙여넣기 → Run
 시연 안정성과 재현성을 위해 검증된 SQL 시나리오를 사용했습니다.
 
 즉, **데모 앱은 안정성을 위한 제품 인터페이스**이고,
-**`agent_v2.py`는 프로젝트의 핵심 의사결정 로직을 담은 고급 에이전트**입니다.
+`**agent_v2.py`는 프로젝트의 핵심 의사결정 로직을 담은 고급 에이전트**입니다.
 
 ---
 
 ## 🚀 현재 구현 + 확장 방향
 
 **이미 구현된 것 (`agent_v2.py`)**
+
 - 멀티 도메인 동시 분석 (마케팅 + 퍼널 + CS)
 - 의사결정 유형 자동 분류
 - Conflict Detection 및 도메인 간 연관 추론
 - 영향도/긴급도 기반 우선순위화
 
 **확장 가능한 것**
+
 - Cortex ML Forecast 결합 → "다음 달 무엇을 준비해야 하는가"까지 제안
 - 지역 단위 의사결정 → 강남구, 송파구 등 지역 맞춤형 액션
 - 운영 자동화 → 추천 결과를 알림/리포트 형태로 자동 배포
@@ -379,4 +454,5 @@ snowflake_app.py 내용 붙여넣기 → Run
 ---
 
 ## 📅 개발 기간
+
 2026년 4월 | Snowflake Hackathon 2026
