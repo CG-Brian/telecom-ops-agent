@@ -8,6 +8,8 @@
 
 > 단순 분석이 아니라, 여러 데이터를 종합해 **무엇을 먼저 해야 하는지 결정하는 AI 에이전트**
 
+> Top-1 Accuracy 33%, Hallucination 0%,  
+
 ---
 
 ## ❗ Problem
@@ -37,14 +39,17 @@ CS팀      →  콜센터 연결률만 봄
 
 ### 1) Marketing Decision
 
+최적 채널 추천 + 액션 자동 생성
 <img src="./assets/marketing_demo.gif" width="800"/>
 
 ### 2) Funnel Bottleneck Detection
 
+퍼널 병목 자동 탐지
 <img src="./assets/funnel_demo.png" width="800"/>
 
 ### 3) CS Optimization Insight
 
+CS 운영 최적화 인사이트
 cs demo
 
 > **Demo UI = Interface** / **agent_v2.py = Brain**
