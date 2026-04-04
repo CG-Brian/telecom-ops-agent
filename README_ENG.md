@@ -34,10 +34,10 @@ This fragmentation causes:
 3 questions covering decisions across Marketing, Funnel, and CS.
 
 ### 1) Marketing Decision
-![marketing demo](./assets/demo_marketing.png)
+<img src="./assets/marketing_demo.gif" width="800"/>
 
 ### 2) Funnel Bottleneck Detection
-![funnel demo](./assets/demo_funnel.png)
+<img src="./assets/funnel_demo.png" width="800"/>
 
 ### 3) CS Optimization Insight
 ![cs demo](./assets/demo_cs.png)
@@ -95,18 +95,10 @@ What `agent_v2.py` does:
 
 ### 🧠 Multi-Domain Decision Examples
 
-**Question 1: Root Cause Analysis**
-> Why is the conversion rate low?
-
-**Result:**
-```
-Direct Cause:  Consultation request CVR 29.4% → Funnel bottleneck 🔴
-Indirect Cause: Marketing inflow is healthy (nc_money +290%) 🟢 → Not a channel issue
-Conflict: "Inflow is healthy, but conversion is being lost downstream"
-```
-
-**Question 2: Priority Decision**
+**Question 1: Priority Decision**
 > What should we fix first to improve performance?
+
+<img src="./assets/multi_domain_demo_1.gif" width="800"/>
 
 **Result:**
 ```
