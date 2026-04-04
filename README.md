@@ -10,6 +10,8 @@
 
 > Top-1 Accuracy 33%, Hallucination 0%,  
 
+🌐 There is an English version of this README: [README_ENG.md](./README_ENG.md)
+
 ---
 
 ## ❗ Problem
