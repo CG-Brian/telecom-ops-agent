@@ -42,14 +42,13 @@ CS팀      →  콜센터 연결률만 봄
 ### 1) Marketing Decision
 
 최적 채널 추천 + 액션 자동 생성
-<img src="./assets/marketing_demo.gif" width="700"
-     style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+<img src="./assets/marketing_demo.gif" width="700"/>
 
 ### 2) Funnel Bottleneck Detection
 
 퍼널 병목 자동 탐지
-<img src="./assets/funnel_demo.png" width=
-   style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);""800"/>
+<img src="./assets/funnel_demo.png" width="700"
+     style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
 
 ### 3) CS Optimization Insight
 
