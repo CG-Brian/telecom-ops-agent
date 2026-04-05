@@ -6,4 +6,5 @@ __pycache__/
 .ipynb_checkpoints/
 *.png
 !assets/funnel_demo.png
+!assets/cs_demo.png
                  
