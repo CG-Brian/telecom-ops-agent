@@ -55,6 +55,7 @@ CS팀      →  콜센터 연결률만 봄
 ### 3) CS Optimization Insight
 
 CS 운영 최적화 인사이트
+
 <img src="./assets/cs_demo.png" width="800"
      style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
 
