@@ -1,0 +1,19 @@
+# Python 3.10.11 기준
+
+# Snowflake
+snowflake-snowpark-python>=1.20.0
+snowflake-connector-python>=3.6.0
+
+# Streamlit
+streamlit>=1.32.0
+
+# Data
+pandas>=2.0.0
+numpy>=1.26.0
+
+# Utils
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# Visualization (EDA)
+matplotlib>=3.8.0
