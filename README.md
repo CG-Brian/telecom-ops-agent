@@ -42,17 +42,20 @@ CS팀      →  콜센터 연결률만 봄
 ### 1) Marketing Decision
 
 최적 채널 추천 + 액션 자동 생성
-<img src="./assets/marketing_demo.gif" width="800"/>
+<img src="./assets/marketing_demo.gif" width="800"
+   style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/>
 
 ### 2) Funnel Bottleneck Detection
 
 퍼널 병목 자동 탐지
-<img src="./assets/funnel_demo.png" width="800"/>
+<img src="./assets/funnel_demo.png" width=
+   style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);""800"/>
 
 ### 3) CS Optimization Insight
 
 CS 운영 최적화 인사이트
-cs demo
+<img src="./assets/cs_demo.png" width=
+   style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);""800"/>
 
 > **Demo UI = Interface** / **agent_v2.py = Brain**
 >
@@ -119,7 +122,8 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 
 > 지금 성과를 올리려면 뭐부터 해야 해?
 
-<img src="./assets/multi_domain_demo_1.gif" width="800"/>
+<img src="./assets/multi_domain_demo_1.gif" width="800"
+   style="border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);"/>
 
 **결과:**
 
