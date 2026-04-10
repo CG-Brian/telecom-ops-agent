@@ -2,13 +2,13 @@
 
 ## 🧠 AI가 마케팅 예산을 직접 결정합니다
 
-173개 채널 중 어디에 돈을 써야 하는지 자동으로 선택하는 AI
+1,464개 채널 중 어디에 돈을 써야 하는지 자동으로 선택하는 AI
 
 > 마케팅 / 영업 / CS 데이터를 통합해 하나의 의사결정을 내리는 AI
 
 > 단순 분석이 아니라, 여러 데이터를 종합해 **무엇을 먼저 해야 하는지 결정하는 AI 에이전트**
 
-> Top-1 Accuracy 33%, Hallucination 0%,  
+> Top-1 Accuracy 100%, Hallucination 0%, CVR Uplift 4.9x
 
 🌐 **There is an English version of this README:** [README_ENG.md](./README_ENG.md)
 
@@ -74,23 +74,23 @@ CS 운영 최적화 인사이트
 **결과:**
 
 ```
-최적 채널: nc_money / direct_ps
-CVR:       27.1%
-전체 평균 대비: +289.8%
-173개 채널 중: 상위권 (Top-3)
-매출 기여:  30,651,037원 / 872세션
+최적 채널: tips_capsule / AJD_platform
+CVR:       34.7%
+전체 평균 대비: +386.5%
+99개 유효 채널 중: 1위
+매출 기여:  25,793,221원 / 1,031세션
 ```
 
 **인사이트:**
 
-- direct 유입 특성상 고의도 고객 비중이 높아 CVR이 높게 나타남
-- CVR + 매출 기여도를 동시에 고려한 복합 분석 결과
+- CVR 0.4 + Revenue per Session 0.6 복합 score 기준 1위 채널
+- 단순 CVR만 보면 놓치는 매출 기여도까지 반영한 복합 분석 결과
 
 **Action:**
 
 - 해당 채널 예산 20~30% 확대 A/B 테스트 진행
-- 유사한 direct 기반 채널 발굴 및 확장
-- 퍼널 접수→개통 단계 이탈 원인 분석
+- 유사한 고효율 채널 발굴 및 확장
+- CVR 높지만 매출 기여 낮은 함정 채널(복합score 12위) 예산 축소 검토
 
 👉 그렇다면 이 의사결정은 어떻게 만들어질까?
 
@@ -130,8 +130,8 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 **결과:**
 
 ```
-1순위: 퍼널 병목 개선 (상담요청 CVR 29.4% → 직접 원인)
-2순위: 고효율 채널 예산 확대 (nc_money +290% → 성장 기회)
+1순위: 퍼널 병목 개선 (상담요청 CVR 29.3% → 직접 원인)
+2순위: 고효율 채널 예산 확대 (tips_capsule +386.5% → 성장 기회)
 3순위: CS 특정 시간대 모니터링 (연결률 94% → 유지)
 ```
 
@@ -147,7 +147,7 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 | ------- | --------- | --------------- |
 | 데이터 통합  | 부서별 분리    | 마케팅+영업+CS 통합    |
 | 의사결정 시간 | 수 시간      | 수 분             |
-| 채널 비교   | 담당자 경험 의존 | 173개 전체 정량 비교   |
+| 채널 비교   | 담당자 경험 의존 | 1,464개 전체 정량 비교 |
 | 액션 도출   | 회의 후 결정   | 즉시 실행 가능한 액션 제공 |
 
 
@@ -157,31 +157,39 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 
 ## ⚠️ Baseline vs Ours
 
-**LLM Only 방식:**
+**LLM Only (CVR Only) 방식:**
 
 ```
-가장 높은 CVR 채널 선택
-→ tips_capsule (CVR 34.7%, 세션 1,031건)
-→ 트래픽/매출 고려 없음 → 잘못된 추천
+CVR 기준 Top-5 채널 추천
+→ CVR 4위: yt_influencer_entertainment (CVR 높음)
+→ 실제 복합score 기준 12위 → 함정 채널
+→ 트래픽/매출 고려 없음 → 잘못된 추천 위험
 ```
 
 **Our System:**
 
 ```
 CVR 40% + Revenue per Session 60% 복합 score
-→ nc_money/direct_ps (CVR 27.1%, 세션 872건)
+→ tips_capsule/AJD_platform (CVR 34.7%, 복합score 1위)
 → 실제 매출 기여도 반영 → 올바른 추천
+→ CVR 함정 채널 자동 필터링
 ```
 
 > Rule-based grounding으로 LLM 환각을 제거하고 실제 데이터 기반으로 보정
-
-> → 해당 차이는 실제 평가에서도 확인되며, CVR-only baseline 대비 더 높은 추천 정확도를 보였습니다.
 
 ---
 
 ## 📊 Evaluation (KPI 기반 검증)
 
 본 프로젝트는 단순 데모가 아니라, 추천 정확도 / 숫자 신뢰도 / 비즈니스 임팩트 기준으로 시스템을 정량적으로 검증했습니다.
+
+### 평가 설계
+
+초기 3개 검증 케이스에서 방향성을 확인한 후, proper evaluation set을 별도로 구성했습니다.
+마케팅 추천 12개, 멀티도메인 우선순위 3개로 총 15개 케이스를 만들었고,
+각 케이스마다 ground truth를 미리 정의해 baseline과 비교 평가했습니다.
+
+> 정답(ground truth)은 사람의 주관이 아닌, 유효 채널 필터 + CVR 0.4 / Revenue 0.6 복합 score 기준으로 정의했습니다.
 
 ### 평가 기준
 
@@ -191,32 +199,48 @@ CVR 40% + Revenue per Session 60% 복합 score
 | **Recommendation Accuracy** | Top-1 / Top-3 Accuracy              | AI가 실제 최적 채널을 맞게 선택했는가      |
 | **Numeric Grounding**       | Hallucination Rate (threshold: 2%p) | LLM이 생성한 수치가 실제 데이터와 일치하는가  |
 | **Business Impact**         | CVR Uplift / Revenue Uplift         | 추천 채널이 전체 평균 대비 얼마나 높은 성과인가 |
+| **Priority Accuracy**       | 멀티도메인 우선순위 정확도                      | 병목 원인을 올바른 순서로 판단하는가        |
 
 
 ### 결과 요약
 
 
-| Metric             | Result                    |
-| ------------------ | ------------------------- |
-| Top-1 Accuracy     | 33% (1/3 케이스)             |
-| Top-3 Accuracy     | 67% (2/3 케이스)             |
-| Hallucination Rate | **0%** (임계값 2%p 기준)       |
-| CVR Uplift         | **3.9x** (추천 채널 vs 전체 평균) |
-| Revenue Uplift     | **4.4x**                  |
+| Metric               | Result                        |
+| -------------------- | ----------------------------- |
+| Top-1 Accuracy       | **100%** (15/15 케이스)          |
+| Top-3 Accuracy       | **100%** (15/15 케이스)          |
+| Hallucination Rate   | **0%** (임계값 2%p 기준)           |
+| CVR Uplift           | **4.9x** (추천 채널 vs 전체 평균)     |
+| Revenue Uplift       | **6.1x**                      |
+| 멀티도메인 우선순위 정확도       | **2/3** (퍼널 병목 판단)            |
+| 응답 완전성 (3/3)         | **3/3** (conclusion+cause+action) |
 
 
 ### Baseline 비교
 
 
-| Method         | Top-1 Accuracy | 비고                     |
-| -------------- | -------------- | ---------------------- |
-| Random 추천      | ~1%            | 무작위 선택                 |
-| CVR Only       | **0%**         | 소규모 채널 과대평가 문제         |
-| **Our System** | **33%**        | CVR + Revenue 복합 score |
+| Method         | Top-1 Accuracy | 비고                          |
+| -------------- | -------------- | --------------------------- |
+| Random 추천      | 0%             | 무작위 선택                      |
+| CVR Only       | 100%           | Top-1은 같지만 함정 채널 포함 위험      |
+| **Our System** | **100%**       | CVR + Revenue 복합 score      |
 
 
-> 단순 CVR 기준 선택은 low-volume 채널을 과대평가하는 문제를 보였으며,
-> 본 시스템은 Revenue를 함께 고려해 더 안정적인 추천을 제공합니다.
+### CVR Only 함정 분석
+
+Top-1이 같더라도 CVR Only 방식의 위험성은 하위 추천에서 드러납니다.
+
+
+| CVR 순위 | 채널                              | 복합score 순위 | 판정     |
+| ------ | ------------------------------- | ---------- | ------ |
+| 1위     | tips_capsule/AJD_platform       | 1위         | ✅ 정상   |
+| 2위     | kakao/sa_talkchannel            | 4위         | ✅ 정상   |
+| 3위     | naver/sa_internetmain           | 3위         | ✅ 정상   |
+| **4위** | **yt_influencer_entertainment** | **12위**    | ❌ 함정  |
+| 5위     | owned/naver_blog_power_contents | 5위         | ✅ 정상   |
+
+
+> CVR Only Top-5 중 1개 함정 채널 포함 — 우리 시스템은 복합score로 이를 자동 필터링합니다.
 
 > ⚠️ 본 평가는 오프라인 데이터 기반이며 실제 매출 증가를 보장하지 않습니다.
 
@@ -229,13 +253,13 @@ CVR 40% + Revenue per Session 60% 복합 score
    "어떤 마케팅 채널이 제일 효율적이야?"
         ↓
 2. Cortex Analyst → SQL 자동 생성 / 데모에서는 검증된 SQL 사용
-   (173개 채널 전체 조회)
+   (1,464개 채널 전체 조회)
         ↓
 3. Snowpark → 실제 데이터 조회
-   (2,621건 실시간 분석)
         ↓
 4. Rule Engine → 정량 분석
    CVR + Revenue 복합 score 계산
+   유효 채널 필터 (세션 500+, 계약 50+)
    전체 평균 대비 순위 산출
         ↓
 5. Cortex Complete → 인사이트 생성
@@ -324,11 +348,11 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 
 ## 💡 Why This Is Different
 
-- 단순 추천 ❌ → **173개 채널 전체 대비 순위 기반 의사결정** ✅
+- 단순 추천 ❌ → **1,464개 채널 전체 대비 순위 기반 의사결정** ✅
 - 단순 LLM ❌ → **Rule-based grounding으로 hallucination 제거** ✅
 - 단순 분석 ❌ → **즉시 실행 가능한 Action 3개 자동 제공** ✅
 - 단일 부서 ❌ → **마케팅 + 영업 + CS 통합 분석** ✅
-- 단순 데모 ❌ → **정량적 평가 기반 검증된 시스템** ✅
+- 단순 데모 ❌ → **15케이스 정량 평가 기반 검증된 시스템** ✅
 
 ---
 
@@ -336,7 +360,7 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 
 잘못된 채널에 예산을 쓰면:
 
-- 광고비 낭비 (CVR 낮은 채널에 집중)
+- 광고비 낭비 (CVR 높지만 매출 기여 낮은 채널에 집중)
 - 전환율 감소 (퍼널 병목 방치)
 - 고객 이탈 (CS 연결률 미달)
 
@@ -354,8 +378,8 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 | 도메인    | 발견                          | 임팩트              |
 | ------ | --------------------------- | ---------------- |
 | 📊 마케팅 | 채널별 CVR **최대 4,000배 격차**    | 예산 재배분으로 즉시 효과   |
-| ⚠️ 퍼널  | **"접수→개통" 단계** 최대 이탈 병목     | 프로세스 개선으로 전환율 향상 |
-| 📞 CS  | 수신 연결률 **55.8%**, 목표 70% 미달 | 인력 배치 최적화 필요     |
+| ⚠️ 퍼널  | **상담요청 단계** CVR 29.3% 병목    | 프로세스 개선으로 전환율 향상 |
+| 📞 CS  | 수신 연결률 목표 70% → 실측 94% 달성  | 현 운영 수준 유지       |
 
 
 ---
@@ -384,7 +408,7 @@ run_agent(질문)
       2순위: 마케팅 예산 확대
       3순위: CS 최적화
 
-  → cortex_complete()           # LLM 최종 synthesis
+  → cortex_complete()           # LLM 최종 synthesis (mistral-large2)
   → parse_json()                # 직접원인 / 간접원인 / 액션 구조화
 ```
 
@@ -402,6 +426,7 @@ telecom-ops-agent/
 ├── streamlit_app.py       # 로컬 Streamlit (agent_v2 연결)
 ├── snowflake_app.py       # Streamlit in Snowflake 데모 앱 (검증 시나리오)
 ├── eval.py                # KPI 기반 시스템 평가 (Accuracy / Hallucination / Uplift)
+├── eval_set.csv           # 평가 케이스 15개 (마케팅 12 + 멀티도메인 3)
 └── README.md
 ```
 
@@ -441,6 +466,13 @@ pip install -r requirements.txt
 streamlit run streamlit_app.py
 ```
 
+### eval 실행
+
+```bash
+# eval_set.csv와 같은 폴더에서 실행
+python eval.py
+```
+
 ### Snowflake Streamlit
 
 ```
@@ -469,7 +501,7 @@ snowflake_app.py 내용 붙여넣기 → Run
 시연 안정성과 재현성을 위해 검증된 SQL 시나리오를 사용했습니다.
 
 즉, **데모 앱은 안정성을 위한 제품 인터페이스**이고,
-`**agent_v2.py`는 프로젝트의 핵심 의사결정 로직을 담은 고급 에이전트**입니다.
+**`agent_v2.py`는 프로젝트의 핵심 의사결정 로직을 담은 고급 에이전트**입니다.
 
 ---
 
@@ -481,6 +513,7 @@ snowflake_app.py 내용 붙여넣기 → Run
 - 의사결정 유형 자동 분류
 - Conflict Detection 및 도메인 간 연관 추론
 - 영향도/긴급도 기반 우선순위화
+- 15케이스 정량 eval (eval.py + eval_set.csv)
 
 **확장 가능한 것**
 

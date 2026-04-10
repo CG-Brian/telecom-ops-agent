@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import sys
+import time
 from typing import Any, Optional
 
 import requests
@@ -105,13 +106,12 @@ def parse_intent(user_question: str) -> dict[str, Any]:
         domains.add("marketing")
     if any(k in q for k in ("퍼널", "전환", "병목", "이탈", "개통", "접수", "계약", "상담")):
         domains.add("funnel")
-        domains.add("marketing") 
+        domains.add("marketing")
     if any(k in q for k in ("cs", "콜", "연결", "인력", "상담원", "통화", "수신", "발신")):
         domains.add("cs")
     if any(k in q for k in ("강남", "송파", "지역", "서울", "계약", "매출", "영업")):
         domains.add("sales")
     if not domains:
-        # 도메인 불명확 → 전체 분석
         domains = {"marketing", "funnel", "cs"}
 
     # 의사결정 유형
@@ -128,7 +128,6 @@ def parse_intent(user_question: str) -> dict[str, Any]:
             region = r
             break
 
-    # 멀티 도메인이면 통합 질의
     analyst_parts = [user_question.strip()]
     if "marketing" in domains:
         analyst_parts.append("마케팅 채널(utm_source, utm_medium)별 세션, 계약 수, 계약 전환율, 매출을 요약해 주세요.")
@@ -150,15 +149,44 @@ def parse_intent(user_question: str) -> dict[str, Any]:
 
 # -----------------------------------------------------------------------------
 # REST 인증
+# ★ 수정: 토큰 가져오는 방식 안정화 — 여러 경로 시도
 # -----------------------------------------------------------------------------
 def _get_rest_auth(session: Session) -> tuple[str, Optional[str]]:
+    # 1순위: .env에 PAT 있으면 그걸 씀 (가장 안정적)
     pat = os.environ.get("SNOWFLAKE_PAT", "").strip()
     if pat:
         return pat, "PROGRAMMATIC_ACCESS_TOKEN"
+
+    # 2순위: 세션 내부 토큰 (여러 경로 시도)
     conn = session._conn._conn
-    tok = conn._rest.token
+    tok = None
+
+    # 경로 1
+    try:
+        tok = conn._rest.token
+    except Exception:
+        pass
+
+    # 경로 2
     if not tok:
-        raise RuntimeError("REST 호출용 토큰이 없습니다.")
+        try:
+            tok = conn.rest.token
+        except Exception:
+            pass
+
+    # 경로 3
+    if not tok:
+        try:
+            tok = session._conn._conn._token
+        except Exception:
+            pass
+
+    if not tok:
+        raise RuntimeError(
+            "REST 호출용 토큰이 없습니다. "
+            ".env에 SNOWFLAKE_PAT=<토큰값> 을 추가하세요. "
+            "Snowsight → 프로필 → Settings → Authentication → Generate new token"
+        )
     return tok, None
 
 
@@ -176,8 +204,14 @@ def _analyst_api_url(session: Session) -> str:
 
 # -----------------------------------------------------------------------------
 # Step 2 — Cortex Analyst 호출
+# ★ 수정: timeout 60초로 증가 + 1회 재시도
 # -----------------------------------------------------------------------------
-def call_cortex_analyst(session: Session, user_text: str, timeout_sec: int = 30) -> dict[str, Any]:
+def call_cortex_analyst(
+    session: Session,
+    user_text: str,
+    timeout_sec: int = 60,   # 30 → 60
+    retry: int = 1,
+) -> dict[str, Any]:
     token, token_type = _get_rest_auth(session)
     url = _analyst_api_url(session)
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -190,14 +224,31 @@ def call_cortex_analyst(session: Session, user_text: str, timeout_sec: int = 30)
         "database": "HACKATHON_DB",
         "schema": "ANALYTICS",
     }
-    resp = requests.post(url, headers=headers, json=body, timeout=timeout_sec)
-    try:
-        payload = resp.json()
-    except Exception:
-        payload = {"_raw_text": resp.text}
-    if resp.status_code != 200:
-        raise RuntimeError(f"Cortex Analyst HTTP {resp.status_code}: {json.dumps(payload, ensure_ascii=False)[:500]}")
-    return payload
+
+    last_err = None
+    for attempt in range(retry + 1):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout_sec)
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = {"_raw_text": resp.text}
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Cortex Analyst HTTP {resp.status_code}: "
+                    f"{json.dumps(payload, ensure_ascii=False)[:500]}"
+                )
+            return payload
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            last_err = e
+            if attempt < retry:
+                logger.warning(f"Cortex Analyst 연결 실패 ({attempt+1}/{retry+1}), 3초 후 재시도...")
+                time.sleep(3)
+            continue
+        except RuntimeError:
+            raise
+
+    raise RuntimeError(f"Cortex Analyst 호출 실패 (재시도 {retry}회): {last_err}")
 
 
 def extract_sql(payload: dict[str, Any]) -> tuple[Optional[str], str]:
@@ -300,8 +351,6 @@ def extract_marketing_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
     avg_cvr = sum(all_cvrs) / len(all_cvrs) if all_cvrs else 0
     cvr_vs_avg = round((best_cvr - avg_cvr) / avg_cvr * 100, 1) if avg_cvr > 0 else 0
     rank = sorted(all_cvrs, reverse=True).index(best_cvr) + 1
-
-    # 채널 신호: 좋음/나쁨 판단
     signal = "good" if cvr_vs_avg > 100 else "neutral" if cvr_vs_avg > 0 else "bad"
 
     return {
@@ -322,15 +371,15 @@ def extract_funnel_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not rows:
         return {"available": False}
 
-    # CVR_* 컬럼 집계
     funnel_keys = (
-    "CVR_CONSULT_REQUEST", "CVR_REGISTEND", "CVR_OPEN", "CVR_PAYEND",
-    "AVG_CVR_CONSULT_REQUEST", "AVG_CVR_REGISTEND", "AVG_CVR_OPEN", "AVG_CVR_PAYEND",)
+        "CVR_CONSULT_REQUEST", "CVR_REGISTEND", "CVR_OPEN", "CVR_PAYEND",
+        "AVG_CVR_CONSULT_REQUEST", "AVG_CVR_REGISTEND", "AVG_CVR_OPEN", "AVG_CVR_PAYEND",
+    )
     agg: dict[str, list[float]] = {k: [] for k in funnel_keys}
     drop_keys = (
-    "DROP_CONSULT_TO_REGIST", "DROP_REGIST_TO_OPEN", "DROP_OPEN_TO_PAYEND",
-    "DROPOFF_CONSULT_TO_REGIST", "DROPOFF_REGIST_TO_OPEN", "DROPOFF_OPEN_TO_PAYEND",
-    "AVG_CVR_CONSULT_REQUEST", "AVG_CVR_REGISTEND", "AVG_CVR_OPEN", "AVG_CVR_PAYEND",)
+        "DROP_CONSULT_TO_REGIST", "DROP_REGIST_TO_OPEN", "DROP_OPEN_TO_PAYEND",
+        "DROPOFF_CONSULT_TO_REGIST", "DROPOFF_REGIST_TO_OPEN", "DROPOFF_OPEN_TO_PAYEND",
+    )
     drop_agg: dict[str, list[float]] = {k: [] for k in drop_keys}
 
     for r in rows:
@@ -347,36 +396,31 @@ def extract_funnel_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
                     drop_agg[k].append(float(u[k]))
                 except (TypeError, ValueError):
                     pass
-        # TRANSITION/DROPOFF 방식
-        transition = u.get("TRANSITION") or u.get("transition")
-        dropoff = u.get("DROPOFF") or u.get("dropoff")
 
     means = {k: (sum(v) / len(v) if v else None) for k, v in agg.items()}
     valid = {k: v for k, v in means.items() if v is not None}
-
     drop_means = {k: (sum(v) / len(v) if v else None) for k, v in drop_agg.items()}
     valid_drops = {k: v for k, v in drop_means.items() if v is not None}
 
     if valid:
         stage = min(valid, key=valid.get)
         label_map = {
-            "CVR_CONSULT_REQUEST": "상담요청",
-            "CVR_REGISTEND": "접수",
-            "CVR_OPEN": "개통",
-            "CVR_PAYEND": "지급",
-            "AVG_CVR_CONSULT_REQUEST": "상담요청",  # 추가
-            "AVG_CVR_REGISTEND": "접수",            # 추가
-            "AVG_CVR_OPEN": "개통",                  # 추가
-            "AVG_CVR_PAYEND": "지급",               # 추가
+            "CVR_CONSULT_REQUEST":     "상담요청",
+            "CVR_REGISTEND":           "접수",
+            "CVR_OPEN":                "개통",
+            "CVR_PAYEND":              "지급",
+            "AVG_CVR_CONSULT_REQUEST": "상담요청",
+            "AVG_CVR_REGISTEND":       "접수",
+            "AVG_CVR_OPEN":            "개통",
+            "AVG_CVR_PAYEND":          "지급",
         }
         bottleneck = label_map.get(stage, stage)
         bottleneck_cvr = round(valid[stage], 1)
 
-        # 드롭 분석
         drop_map = {
             "DROP_CONSULT_TO_REGIST": "상담→접수",
-            "DROP_REGIST_TO_OPEN": "접수→개통",
-            "DROP_OPEN_TO_PAYEND": "개통→지급",
+            "DROP_REGIST_TO_OPEN":    "접수→개통",
+            "DROP_OPEN_TO_PAYEND":    "개통→지급",
         }
         max_drop = None
         max_drop_val = -1.0
@@ -395,7 +439,8 @@ def extract_funnel_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "max_drop_value": round(max_drop_val, 1) if max_drop else None,
             "all_stage_cvrs": {label_map.get(k, k): round(v, 1) for k, v in valid.items()},
             "signal": signal,
-            "summary": f"{bottleneck} 단계 CVR {bottleneck_cvr}%로 병목 발생" + (f", 최대 이탈폭: {max_drop} {max_drop_val:.1f}%p" if max_drop else ""),
+            "summary": f"{bottleneck} 단계 CVR {bottleneck_cvr}%로 병목 발생"
+                       + (f", 최대 이탈폭: {max_drop} {max_drop_val:.1f}%p" if max_drop else ""),
         }
 
     return {"available": False, "note": "퍼널 CVR 컬럼 없음"}
@@ -442,7 +487,8 @@ def extract_cs_evidence(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gap_to_target": round((0.70 - avg_cr) * 100, 1) if below_target else 0,
         "peak_time": peak,
         "signal": signal,
-        "summary": f"연결률 {round(avg_cr*100,1)}%" + (f" (목표 70% 대비 {round((0.70-avg_cr)*100,1)}%p 미달)" if below_target else " (목표 달성)"),
+        "summary": f"연결률 {round(avg_cr*100,1)}%"
+                   + (f" (목표 70% 대비 {round((0.70-avg_cr)*100,1)}%p 미달)" if below_target else " (목표 달성)"),
     }
 
 
@@ -451,7 +497,7 @@ def extract_sales_evidence(rows: list[dict[str, Any]], region: Optional[str] = N
         return {"available": False}
 
     total_contracts = 0
-    total_revenue = 0
+    total_revenue = 0.0
     region_found = False
 
     for r in rows:
@@ -476,7 +522,8 @@ def extract_sales_evidence(rows: list[dict[str, Any]], region: Optional[str] = N
         "total_revenue": total_revenue,
         "region": region,
         "region_found": region_found,
-        "summary": f"총 계약 {total_contracts:,}건, 매출 {int(total_revenue):,}원" + (f" ({region} 데이터 포함)" if region_found else ""),
+        "summary": f"총 계약 {total_contracts:,}건, 매출 {int(total_revenue):,}원"
+                   + (f" ({region} 데이터 포함)" if region_found else ""),
     }
 
 
@@ -492,9 +539,9 @@ def detect_conflicts(evidence: dict[str, Any]) -> dict[str, Any]:
     conflicts = []
     interpretation = ""
 
-    mkt_sig = signals.get("marketing")
+    mkt_sig    = signals.get("marketing")
     funnel_sig = signals.get("funnel")
-    cs_sig = signals.get("cs")
+    cs_sig     = signals.get("cs")
 
     if mkt_sig == "good" and funnel_sig == "bad":
         conflicts.append("마케팅 유입은 양호하나 후속 전환에서 손실 발생")
@@ -510,11 +557,7 @@ def detect_conflicts(evidence: dict[str, Any]) -> dict[str, Any]:
     elif all(s == "bad" for s in signals.values() if s):
         interpretation = "전 영역에 걸쳐 개선이 필요합니다. 퍼널 병목 해결을 최우선으로 하세요."
 
-    return {
-        "signals": signals,
-        "conflicts": conflicts,
-        "interpretation": interpretation,
-    }
+    return {"signals": signals, "conflicts": conflicts, "interpretation": interpretation}
 
 
 # -----------------------------------------------------------------------------
@@ -524,51 +567,41 @@ def prioritize_actions(evidence: dict[str, Any], decision_type: str) -> list[dic
     priorities = []
 
     funnel_ev = evidence.get("funnel", {})
-    mkt_ev = evidence.get("marketing", {})
-    cs_ev = evidence.get("cs", {})
+    mkt_ev    = evidence.get("marketing", {})
+    cs_ev     = evidence.get("cs", {})
 
     if funnel_ev.get("available") and funnel_ev.get("signal") == "bad":
         priorities.append({
             "rank": 1,
             "area": "퍼널",
             "action": f"{funnel_ev.get('bottleneck_stage', '병목')} 단계 개선",
-            "impact": "높음",
-            "urgency": "높음",
-            "difficulty": "중간",
+            "impact": "높음", "urgency": "높음", "difficulty": "중간",
         })
 
-    if mkt_ev.get("available"):
-        cvr_vs = mkt_ev.get("cvr_vs_avg_pct", 0)
-        if cvr_vs > 100:
+    if mkt_ev.get("available") and mkt_ev.get("cvr_vs_avg_pct", 0) > 100:
+        priorities.append({
+            "rank": 2,
+            "area": "마케팅",
+            "action": f"{mkt_ev.get('best_channel')} 예산 20~30% 확대 A/B 테스트",
+            "impact": "높음", "urgency": "중간", "difficulty": "낮음",
+        })
+
+    if cs_ev.get("available"):
+        if cs_ev.get("below_target"):
             priorities.append({
-                "rank": 2,
-                "area": "마케팅",
-                "action": f"{mkt_ev.get('best_channel')} 예산 20~30% 확대 A/B 테스트",
-                "impact": "높음",
-                "urgency": "중간",
-                "difficulty": "낮음",
+                "rank": 3,
+                "area": "CS",
+                "action": f"{cs_ev.get('peak_time')} 시간대 인력 배치 최적화",
+                "impact": "중간", "urgency": "높음", "difficulty": "낮음",
+            })
+        else:
+            priorities.append({
+                "rank": len(priorities) + 1,
+                "area": "CS",
+                "action": f"{cs_ev.get('peak_time')} 시간대 선제적 모니터링",
+                "impact": "낮음", "urgency": "낮음", "difficulty": "낮음",
             })
 
-    if cs_ev.get("available") and cs_ev.get("below_target"):
-        priorities.append({
-            "rank": 3,
-            "area": "CS",
-            "action": f"{cs_ev.get('peak_time')} 시간대 인력 배치 최적화",
-            "impact": "중간",
-            "urgency": "높음",
-            "difficulty": "낮음",
-        })
-    elif cs_ev.get("available") and not cs_ev.get("below_target"):
-        priorities.append({
-            "rank": len(priorities) + 1,
-            "area": "CS",
-            "action": f"{cs_ev.get('peak_time')} 시간대 선제적 모니터링",
-            "impact": "낮음",
-            "urgency": "낮음",
-            "difficulty": "낮음",
-        })
-
-    # 순위 재정렬
     for i, p in enumerate(priorities, 1):
         p["rank"] = i
 
@@ -576,7 +609,8 @@ def prioritize_actions(evidence: dict[str, Any], decision_type: str) -> list[dic
 
 
 # -----------------------------------------------------------------------------
-# Step 6 — LLM 프롬프트 (Evidence 기반)
+# Step 6 — LLM 프롬프트 + Complete 호출
+# ★ 수정: Complete → complete (소문자), SQL 폴백 유지
 # -----------------------------------------------------------------------------
 EMPTY_OUTPUT = {
     "conclusion": "",
@@ -596,17 +630,17 @@ def build_prompt_v2(
     priorities: list[dict[str, Any]],
     sql_results_summary: str,
 ) -> str:
-    evidence_json = json.dumps(evidence, ensure_ascii=False, default=str, indent=2)
-    conflicts_json = json.dumps(conflicts, ensure_ascii=False, default=str)
+    evidence_json  = json.dumps(evidence,   ensure_ascii=False, default=str, indent=2)
+    conflicts_json = json.dumps(conflicts,  ensure_ascii=False, default=str)
     priorities_json = json.dumps(priorities, ensure_ascii=False, default=str)
 
     decision_hints = {
-        "root_cause": "직접 원인과 간접 원인을 구분해서 설명하세요.",
-        "priority": "우선순위를 1~3순위로 명확히 제시하세요.",
+        "root_cause":    "직접 원인과 간접 원인을 구분해서 설명하세요.",
+        "priority":      "우선순위를 1~3순위로 명확히 제시하세요.",
         "budget_action": "예산 배분 관점에서 구체적인 수치와 함께 설명하세요.",
-        "ops_action": "운영 관점에서 즉시 실행 가능한 액션을 제시하세요.",
-        "regional": "지역 특성을 고려한 맞춤형 전략을 제시하세요.",
-        "general": "전반적인 상황을 분석하고 핵심 인사이트를 도출하세요.",
+        "ops_action":    "운영 관점에서 즉시 실행 가능한 액션을 제시하세요.",
+        "regional":      "지역 특성을 고려한 맞춤형 전략을 제시하세요.",
+        "general":       "전반적인 상황을 분석하고 핵심 인사이트를 도출하세요.",
     }
     decision_hint = decision_hints.get(intent.get("decision_type", "general"), "")
 
@@ -650,7 +684,7 @@ def build_prompt_v2(
 def parse_json(text: str) -> dict[str, Any]:
     text = text.strip()
     text = re.sub(r'```json\s*', '', text)
-    text = re.sub(r'```\s*', '', text)
+    text = re.sub(r'```\s*',     '', text)
     text = text.strip()
     try:
         return json.loads(text)
@@ -666,16 +700,21 @@ def parse_json(text: str) -> dict[str, Any]:
 
 
 def cortex_complete(session: Session, prompt: str) -> str:
+    # 1순위: snowflake-ml-python의 complete() (소문자)
     try:
-        from snowflake.cortex import Complete
-        out = Complete(CORTEX_MODEL, prompt, session=session)
+        from snowflake.cortex import complete  # ★ 소문자로 수정
+        out = complete(CORTEX_MODEL, prompt, session=session)
         return out if isinstance(out, str) else str(out)
     except ImportError:
-        logger.info("snowflake.cortex.Complete 미설치 — SQL 폴백")
+        logger.info("snowflake.cortex.complete 미설치 — SQL 폴백")
     except Exception as e:
-        logger.warning("Complete 실패, SQL 폴백: %s", e)
+        logger.warning("complete() 실패, SQL 폴백: %s", e)
 
-    rows = session.sql("SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?)", params=[CORTEX_MODEL, prompt]).collect()
+    # 2순위: SQL 방식 (항상 작동)
+    safe_prompt = prompt.replace("'", "''")  # SQL 인젝션 방지
+    rows = session.sql(
+        f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{CORTEX_MODEL}', $$ {safe_prompt} $$)"
+    ).collect()
     if not rows:
         return ""
     return str(rows[0][0])
@@ -686,19 +725,18 @@ def cortex_complete(session: Session, prompt: str) -> str:
 # -----------------------------------------------------------------------------
 def run_agent(user_question: str) -> dict[str, Any]:
     session = get_session()
-    intent = parse_intent(user_question)
+    intent  = parse_intent(user_question)
 
     logger.info(f"도메인: {intent['domains']}, 유형: {intent['decision_type']}")
 
-    # 도메인별 개별 Cortex Analyst 호출
     DOMAIN_QUERIES = {
         "marketing": "마케팅 채널(utm_source, utm_medium)별 세션, 계약 수, 계약 전환율, 매출을 요약해 주세요.",
-        "funnel": "상품 카테고리별 퍼널 단계 전환율과 단계별 이탈폭을 분석해 주세요.",
-        "cs": "콜센터 요일·시간대별 통화 건수와 연결률을 분석해 주세요.",
-        "sales": "지역별 계약 건수와 매출 트렌드를 분석해 주세요.",
+        "funnel":    "상품 카테고리별 퍼널 단계 전환율과 단계별 이탈폭을 분석해 주세요.",
+        "cs":        "콜센터 요일·시간대별 통화 건수와 연결률을 분석해 주세요.",
+        "sales":     "지역별 계약 건수와 매출 트렌드를 분석해 주세요.",
     }
 
-    evidence: dict[str, Any] = {}
+    evidence:  dict[str, Any] = {}
     sql_stmts: dict[str, str] = {}
     analyst_note = ""
 
@@ -707,7 +745,7 @@ def run_agent(user_question: str) -> dict[str, Any]:
         if not query:
             continue
         try:
-            payload = call_cortex_analyst(session, query)
+            payload  = call_cortex_analyst(session, query)
             sql_stmt, _ = extract_sql(payload)
             if sql_stmt:
                 sql_stmts[domain] = sql_stmt
@@ -715,52 +753,54 @@ def run_agent(user_question: str) -> dict[str, Any]:
                 if domain == "marketing":
                     evidence["marketing"] = extract_marketing_evidence(rows)
                 elif domain == "funnel":
-                    evidence["funnel"] = extract_funnel_evidence(rows)
+                    evidence["funnel"]    = extract_funnel_evidence(rows)
                 elif domain == "cs":
-                    evidence["cs"] = extract_cs_evidence(rows)
+                    evidence["cs"]        = extract_cs_evidence(rows)
                 elif domain == "sales":
-                    evidence["sales"] = extract_sales_evidence(rows, intent.get("region"))
+                    evidence["sales"]     = extract_sales_evidence(rows, intent.get("region"))
             else:
                 evidence[domain] = {"available": False, "note": "SQL 생성 실패"}
         except Exception as e:
             logger.warning(f"{domain} 분석 실패: {e}")
             evidence[domain] = {"available": False, "note": str(e)}
 
-    # Conflict Detection
-    conflicts = detect_conflicts(evidence)
-
-    # 우선순위화
+    conflicts  = detect_conflicts(evidence)
     priorities = prioritize_actions(evidence, intent["decision_type"])
 
-    # SQL 결과 요약 (LLM에 넘길 것)
     available_summaries = [
         ev.get("summary", "")
         for ev in evidence.values()
         if isinstance(ev, dict) and ev.get("available")
     ]
-    sql_results_summary = "\n".join(f"- {s}" for s in available_summaries) if available_summaries else "데이터 없음"
+    sql_results_summary = (
+        "\n".join(f"- {s}" for s in available_summaries)
+        if available_summaries else "데이터 없음"
+    )
 
-    # LLM 호출
-    prompt = build_prompt_v2(user_question, intent, evidence, conflicts, priorities, sql_results_summary)
+    prompt = build_prompt_v2(
+        user_question, intent, evidence, conflicts, priorities, sql_results_summary
+    )
     try:
         llm_raw = cortex_complete(session, prompt)
     except Exception as e:
         logger.exception("Cortex Complete 실패")
-        llm_raw = json.dumps({**EMPTY_OUTPUT, "reasoning": f"Complete 실패: {e}"}, ensure_ascii=False)
+        llm_raw = json.dumps(
+            {**EMPTY_OUTPUT, "reasoning": f"Complete 실패: {e}"}, ensure_ascii=False
+        )
 
     output = parse_json(llm_raw)
 
     return {
         **output,
         "_meta": {
-            "intent": intent,
-            "analyst_sql": sql_stmts,
-"row_count": sum(1 for v in evidence.values() if isinstance(v, dict) and v.get("available")),
-            "evidence": evidence,
-            "conflicts": conflicts,
-            "priorities": priorities,
+            "intent":       intent,
+            "analyst_sql":  sql_stmts,
+            "row_count":    sum(1 for v in evidence.values() if isinstance(v, dict) and v.get("available")),
+            "evidence":     evidence,
+            "conflicts":    conflicts,
+            "priorities":   priorities,
             "analyst_note": analyst_note,
-        }
+        },
     }
 
 

@@ -7,4 +7,4 @@ __pycache__/
 *.png
 !assets/funnel_demo.png
 !assets/cs_demo.png
-                 
+check.py
