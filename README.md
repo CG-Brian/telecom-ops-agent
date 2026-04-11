@@ -189,19 +189,27 @@ CVR 40% + Revenue per Session 60% 복합 score
 
 초기 3개 검증 케이스에서 방향성을 확인한 후, proper evaluation set을 별도로 구성했습니다.
 마케팅 추천 12개, 멀티도메인 우선순위 3개로 총 15개 케이스를 만들었고,
-각 케이스마다 ground truth를 미리 정의해 baseline과 비교 평가했습니다.
+각 케이스마다 `expected_rank_band`(top1 / top3 / not_top3)와 `expected_behavior`를 정의해
+단순 accuracy가 아닌 reasoning 검증까지 포함한 평가를 수행했습니다.
 
 > 정답(ground truth)은 사람의 주관이 아닌, 유효 채널 필터 + CVR 0.4 / Revenue 0.6 복합 score 기준으로 정의했습니다.
+
+본 평가는 오프라인 데이터 기반이며,
+모델 성능의 상한선을 확인하기 위한 검증입니다.
+
+실제 환경에서는 더 다양한 케이스가 존재할 수 있습니다.
 
 ### 평가 기준
 
 
 | 항목                          | 지표                                  | 의미                          |
 | --------------------------- | ----------------------------------- | --------------------------- |
+| **Correct Accuracy**        | Top-1 / Top-3 / not_top3 기준 정답률    | 케이스 유형에 맞는 정답 여부            |
 | **Recommendation Accuracy** | Top-1 / Top-3 Accuracy              | AI가 실제 최적 채널을 맞게 선택했는가      |
 | **Numeric Grounding**       | Hallucination Rate (threshold: 2%p) | LLM이 생성한 수치가 실제 데이터와 일치하는가  |
 | **Business Impact**         | CVR Uplift / Revenue Uplift         | 추천 채널이 전체 평균 대비 얼마나 높은 성과인가 |
 | **Priority Accuracy**       | 멀티도메인 우선순위 정확도                      | 병목 원인을 올바른 순서로 판단하는가        |
+| **Response Quality**        | conclusion + cause + action 완전성     | 응답이 의사결정에 필요한 요소를 모두 포함하는가  |
 
 
 ### 결과 요약
@@ -209,12 +217,13 @@ CVR 40% + Revenue per Session 60% 복합 score
 
 | Metric               | Result                        |
 | -------------------- | ----------------------------- |
+| Correct Accuracy     | **100%** (15/15 케이스, Top-3 허용 포함) |
 | Top-1 Accuracy       | **100%** (15/15 케이스)          |
 | Top-3 Accuracy       | **100%** (15/15 케이스)          |
 | Hallucination Rate   | **0%** (임계값 2%p 기준)           |
 | CVR Uplift           | **4.4x** (추천 채널 vs 전체 평균)     |
 | Revenue Uplift       | **8.3x**                      |
-| 멀티도메인 우선순위 정확도       | **2/3** (퍼널 병목 판단)            |
+| 멀티도메인 우선순위 정확도       | **3/3** (퍼널 병목 판단)            |
 | 응답 완전성 (3/3)         | **3/3** (conclusion+cause+action) |
 
 
@@ -428,7 +437,8 @@ telecom-ops-agent/
 ├── streamlit_app.py       # 로컬 Streamlit (agent_v2 연결)
 ├── snowflake_app.py       # Streamlit in Snowflake 데모 앱 (검증 시나리오)
 ├── eval.py                # KPI 기반 시스템 평가 (Accuracy / Hallucination / Uplift)
-├── eval_set.csv           # 평가 케이스 15개 (마케팅 12 + 멀티도메인 3)
+├── eval_set.csv           # 평가 케이스 15개
+│                          #   (expected_rank_band / expected_behavior 포함)
 └── README.md
 ```
 
@@ -515,7 +525,7 @@ snowflake_app.py 내용 붙여넣기 → Run
 - 의사결정 유형 자동 분류
 - Conflict Detection 및 도메인 간 연관 추론
 - 영향도/긴급도 기반 우선순위화
-- 15케이스 정량 eval (eval.py + eval_set.csv)
+- 15케이스 정량 eval (expected_rank_band + expected_behavior 기반)
 
 **확장 가능한 것**
 

@@ -1,16 +1,16 @@
-case_id,question,expected_top1,expected_priority,notes
-MKT-01,어떤 마케팅 채널이 제일 효율적이야?,tips_capsule/AJD_platform,,대표 성공 케이스
-MKT-02,예산을 가장 먼저 늘려야 할 채널은 어디야?,tips_capsule/AJD_platform,,질문 표현 변형
-MKT-03,성과가 가장 좋은 유입 채널은 어디야?,tips_capsule/AJD_platform,,질문 표현 변형
-MKT-04,CVR만 높고 규모가 작은 채널은 피해야 하나?,tips_capsule/AJD_platform,,CVR-only 함정형
-MKT-05,트래픽과 매출을 함께 고려하면 최적 채널은?,tips_capsule/AJD_platform,,복합지표 검증
-MKT-06,전체 세션 대비 계약 성과와 매출을 함께 보면 어디가 1순위야?,tips_capsule/AJD_platform,,복합지표 검증
-MKT-07,지금 광고비를 재배분한다면 가장 먼저 확대할 채널은 어디야?,tips_capsule/AJD_platform,,실행형 질문
-MKT-08,성과가 좋은 채널을 하나만 고르라면 어디를 선택해야 해?,tips_capsule/AJD_platform,,단일 선택 테스트
-MKT-09,CVR이 높아 보여도 실제 우선순위가 낮은 채널은 무엇이야?,tips_capsule/AJD_platform,,함정 회피 확인
-MKT-10,안정적으로 성과를 내는 상위권 채널은 어디야?,tips_capsule/AJD_platform,,Top-3 허용 케이스
-MKT-11,가장 수익성이 높은 채널에 예산을 더 쓰려면 어디를 봐야 해?,tips_capsule/AJD_platform,,중간권 채널 비교
-MKT-12,173개 채널 중 실제 비즈니스 성과 기준으로 가장 좋은 채널은?,tips_capsule/AJD_platform,,발표용 대표 질문
-MD-01,지금 성과를 올리려면 뭐부터 해야 해?,,퍼널,멀티도메인 우선순위
-MD-02,유입은 괜찮은데 성과가 안 나오는 가장 큰 원인은 뭐야?,,퍼널,직접 원인 판단
-MD-03,마케팅 예산 확대와 퍼널 개선 중 무엇이 더 우선이야?,,퍼널,충돌 상황 우선순위
+case_id,question,expected_top1,expected_rank_band,expected_priority,expected_behavior,notes
+MKT-01,어떤 마케팅 채널이 제일 효율적이야?,nc_money/direct_ps,top1,,복합score 1위 채널 추천,대표 성공 케이스
+MKT-02,예산을 가장 먼저 늘려야 할 채널은 어디야?,nc_money/direct_ps,top1,,복합score 1위 채널 추천,질문 표현 변형
+MKT-03,성과가 가장 좋은 유입 채널은 어디야?,nc_money/direct_ps,top1,,복합score 1위 채널 추천,질문 표현 변형
+MKT-04,CVR만 높고 규모가 작은 채널은 피해야 하나?,nc_money/direct_ps,top1,,CVR 높은 소규모 채널 선택하면 안됨,CVR-only 함정형
+MKT-05,트래픽과 매출을 함께 고려하면 최적 채널은?,nc_money/direct_ps,top1,,CVR+Revenue 복합 고려 채널 추천,복합지표 검증
+MKT-06,지금 광고비를 재배분한다면 가장 먼저 확대할 채널은?,nc_money/direct_ps,top1,,복합score 1위 채널 추천,실행형 질문
+MKT-07,성과가 좋은 채널 Top-3를 골라준다면?,tips_capsule/AJD_platform,top3,,복합score 상위 3개 채널 포함,Top-3 허용 케이스
+MKT-08,안정적으로 성과를 내는 상위권 채널은 어디야?,tips_capsule/AJD_platform,top3,,복합score Top-3 안에 드는 채널 추천,Top-3 허용 케이스
+MKT-09,CVR이 높아 보여도 실제 우선순위가 낮은 채널은?,nc_money/direct_ps,top1,,CVR 높지만 revenue 낮은 채널 지적,함정 회피 확인
+MKT-10,가장 수익성이 높은 채널에 예산을 더 쓰려면?,nc_money/direct_ps,top1,,Revenue per session 기준 상위 채널 추천,수익성 기준
+MKT-11,성과가 좋은 채널을 하나만 고르라면?,nc_money/direct_ps,top1,,복합score 1위 채널 추천,단일 선택 테스트
+MKT-12,2047개 채널 중 비즈니스 성과 기준 1위 채널은?,nc_money/direct_ps,top1,,복합score 1위 채널 추천,발표용 대표 질문
+MD-01,지금 성과를 올리려면 뭐부터 해야 해?,,top1,퍼널,퍼널 병목을 1순위로 판단해야 함,멀티도메인 우선순위
+MD-02,유입은 괜찮은데 전환율이 낮은 원인은 뭐야?,,top1,퍼널,마케팅이 아닌 퍼널 병목을 직접 원인으로 지목,직접 원인 판단
+MD-03,마케팅 예산 확대와 퍼널 개선 중 무엇이 더 우선이야?,,top1,퍼널,퍼널 개선을 마케팅보다 우선 판단,충돌 상황 우선순위

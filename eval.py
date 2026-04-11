@@ -199,7 +199,12 @@ def run_agent_cached(user_question: str, session: Session) -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 # Eval 함수들
 # -----------------------------------------------------------------------------
-def eval_channel_accuracy(df_valid: pd.DataFrame, agent_output: dict[str, Any]) -> dict[str, Any]:
+def eval_channel_accuracy(
+    df_valid: pd.DataFrame,
+    agent_output: dict[str, Any],
+    expected_rank_band: str = "top1",   # top1 / top3 / not_top3
+    expected_behavior: str = "",
+) -> dict[str, Any]:
     ranked = compute_score(df_valid).reset_index(drop=True)
     ranked["rank"] = ranked.index + 1
     actual_top1 = ranked.iloc[0]["channel"]
@@ -209,15 +214,30 @@ def eval_channel_accuracy(df_valid: pd.DataFrame, agent_output: dict[str, Any]) 
     if not recommended:
         return {"recommended": None, "actual_top1": actual_top1,
                 "top1_accuracy": 0, "top3_accuracy": 0,
+                "correct": 0, "expected_rank_band": expected_rank_band,
                 "actual_rank": None, "total": len(ranked), "note": "마케팅 evidence 없음"}
     actual_rank = ranked[ranked["channel"] == recommended]["rank"].values
+    top1_acc = int(recommended == actual_top1)
+    top3_acc = int(recommended in actual_top3)
+
+    # expected_rank_band에 따라 정답 기준 결정
+    if expected_rank_band == "top1":
+        correct = top1_acc
+    elif expected_rank_band == "top3":
+        correct = top3_acc
+    else:  # not_top3: 추천 채널이 Top-3 밖이면 정답 (함정 회피)
+        correct = int(recommended not in actual_top3)
+
     return {
-        "recommended":   recommended,
-        "actual_top1":   actual_top1,
-        "top1_accuracy": int(recommended == actual_top1),
-        "top3_accuracy": int(recommended in actual_top3),
-        "actual_rank":   int(actual_rank[0]) if len(actual_rank) > 0 else None,
-        "total":         len(ranked),
+        "recommended":        recommended,
+        "actual_top1":        actual_top1,
+        "top1_accuracy":      top1_acc,
+        "top3_accuracy":      top3_acc,
+        "correct":            correct,
+        "expected_rank_band": expected_rank_band,
+        "expected_behavior":  expected_behavior,
+        "actual_rank":        int(actual_rank[0]) if len(actual_rank) > 0 else None,
+        "total":              len(ranked),
     }
 
 
@@ -331,9 +351,11 @@ def run_eval(eval_path: str = "eval_set.csv") -> None:
     results = []
 
     for _, row in eval_df.iterrows():
-        case_id           = row.get("case_id", "?")
-        question          = row["question"]
-        expected_priority = row.get("expected_priority") or None
+        case_id            = row.get("case_id", "?")
+        question           = row["question"]
+        expected_priority  = row.get("expected_priority") or None
+        expected_rank_band = str(row.get("expected_rank_band", "top1") or "top1").strip().lower()
+        expected_behavior  = str(row.get("expected_behavior", "") or "")
 
         print(f"[{case_id}] {question[:50]}")
 
@@ -344,30 +366,33 @@ def run_eval(eval_path: str = "eval_set.csv") -> None:
             results.append({"case_id": case_id, "question": question, "error": str(e)})
             continue
 
-        acc     = eval_channel_accuracy(df_valid, agent_output)
+        acc     = eval_channel_accuracy(df_valid, agent_output, expected_rank_band, expected_behavior)
         hall    = eval_hallucination(df, agent_output)
         impact  = eval_impact(df_valid, agent_output)
         prio    = eval_priority(agent_output, expected_priority)
         quality = eval_response_quality(agent_output)
 
         recommended = acc.get("recommended") or "없음"
-        print(f"  추천 채널: {recommended}")
+        label = {"top1": "Top-1", "top3": "Top-3 허용", "not_top3": "함정회피"}.get(expected_rank_band, "Top-1")
+        print(f"  추천 채널: {recommended}  [{label}]")
         if acc.get("recommended"):
-            print(f"  Top-1: {'✅' if acc['top1_accuracy'] else '❌'}  "
-                  f"Top-3: {'✅' if acc['top3_accuracy'] else '❌'}  "
-                  f"순위: {acc.get('actual_rank')}위/{acc.get('total')}개")
+            correct_icon = '✅' if acc['correct'] else '❌'
+            print(f"  정답: {correct_icon}  "                  f"Top-1: {'✅' if acc['top1_accuracy'] else '❌'}  "                  f"Top-3: {'✅' if acc['top3_accuracy'] else '❌'}  "                  f"순위: {acc.get('actual_rank')}위/{acc.get('total')}개")
+        if expected_behavior:
+            print(f"  기대동작: {expected_behavior}")
         if "status" in hall:
             print(f"  Grounding: {hall['status']}  (오차 {hall.get('absolute_error', 0)*100:.3f}%p)")
         if "cvr_uplift_rel" in impact:
             print(f"  CVR Uplift: {impact['cvr_uplift_rel']:.1f}x  Rev Uplift: {impact['rev_uplift_rel']:.1f}x")
         if expected_priority and isinstance(expected_priority, str):
-            print(f"  우선순위: {'✅' if prio.get('correct') else '❌'}  "
-                  f"(예상: {expected_priority} / 실제: {prio.get('got')})")
+            print(f"  우선순위: {'✅' if prio.get('correct') else '❌'}  "                  f"(예상: {expected_priority} / 실제: {prio.get('got')})")
         print(f"  응답 품질: {quality['status']}  confidence: {quality['confidence']}")
         print()
 
         results.append({
             "case_id": case_id, "question": question,
+            "expected_rank_band": expected_rank_band,
+            "expected_behavior": expected_behavior,
             "agent_output": agent_output,
             "accuracy": acc, "hallucination": hall,
             "impact": impact, "priority": prio, "quality": quality,
@@ -386,15 +411,18 @@ def run_eval(eval_path: str = "eval_set.csv") -> None:
     print("=" * 60)
 
     if mkt_results:
-        top1_scores = [r["accuracy"]["top1_accuracy"] for r in mkt_results]
-        top3_scores = [r["accuracy"]["top3_accuracy"] for r in mkt_results]
+        # correct = Top-3 허용 케이스면 top3, 아니면 top1 기준
+        correct_scores = [r["accuracy"]["correct"] for r in mkt_results]
+        top1_scores    = [r["accuracy"]["top1_accuracy"] for r in mkt_results]
+        top3_scores    = [r["accuracy"]["top3_accuracy"] for r in mkt_results]
         hall_flags  = [r["hallucination"].get("is_hallucination", False)
                        for r in mkt_results if "status" in r["hallucination"]]
         uplift_vals = [r["impact"]["cvr_uplift_rel"]
                        for r in mkt_results if "cvr_uplift_rel" in r["impact"]]
 
-        avg_top1   = sum(top1_scores) / len(top1_scores) * 100
-        avg_top3   = sum(top3_scores) / len(top3_scores) * 100
+        avg_correct = sum(correct_scores) / len(correct_scores) * 100
+        avg_top1    = sum(top1_scores) / len(top1_scores) * 100
+        avg_top3    = sum(top3_scores) / len(top3_scores) * 100
         hall_rate  = sum(hall_flags) / len(hall_flags) * 100 if hall_flags else 0
         avg_uplift = sum(uplift_vals) / len(uplift_vals) if uplift_vals else 0
 
@@ -405,6 +433,7 @@ def run_eval(eval_path: str = "eval_set.csv") -> None:
         cvr_top1  = int(ground_truth_top1 == cvr_ch) * 100
 
         print(f"\n[마케팅 채널 추천 — {len(mkt_results)}개 케이스]")
+        print(f"  Correct Accuracy: {avg_correct:.0f}%  ({sum(correct_scores)}/{len(correct_scores)})  ← Top-3 허용 포함")
         print(f"  Top-1 Accuracy:   {avg_top1:.0f}%  ({sum(top1_scores)}/{len(top1_scores)})")
         print(f"  Top-3 Accuracy:   {avg_top3:.0f}%  ({sum(top3_scores)}/{len(top3_scores)})")
         print(f"  Hallucination:    {hall_rate:.0f}%")
