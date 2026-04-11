@@ -8,7 +8,7 @@
 
 > 단순 분석이 아니라, 여러 데이터를 종합해 **무엇을 먼저 해야 하는지 결정하는 AI 에이전트**
 
-> Top-1 Accuracy 100%, Hallucination 0%, CVR Uplift 4.9x
+> Top-1 Accuracy 100%, Hallucination 0%, CVR Uplift 4.4x, Rev Uplift 8.3x
 
 🌐 **There is an English version of this README:** [README_ENG.md](./README_ENG.md)
 
@@ -74,23 +74,23 @@ CS 운영 최적화 인사이트
 **결과:**
 
 ```
-최적 채널: tips_capsule / AJD_platform
-CVR:       34.7%
-전체 평균 대비: +386.5%
-99개 유효 채널 중: 1위
-매출 기여:  25,793,221원 / 1,031세션
+최적 채널: nc_money / direct_ps
+CVR:       27.1%
+전체 평균 대비: +289%
+138개 유효 채널 중: 1위
+CVR Uplift: 4.4x  /  Revenue Uplift: 8.3x
 ```
 
 **인사이트:**
 
 - CVR 0.4 + Revenue per Session 0.6 복합 score 기준 1위 채널
-- 단순 CVR만 보면 놓치는 매출 기여도까지 반영한 복합 분석 결과
+- direct 유입 특성상 고의도 고객 비중이 높아 매출 기여도가 압도적
 
 **Action:**
 
 - 해당 채널 예산 20~30% 확대 A/B 테스트 진행
-- 유사한 고효율 채널 발굴 및 확장
-- CVR 높지만 매출 기여 낮은 함정 채널(복합score 12위) 예산 축소 검토
+- 유사한 direct 기반 채널 발굴 및 확장
+- CVR 높지만 복합score 하위권인 함정 채널 3개 예산 축소 검토
 
 👉 그렇다면 이 의사결정은 어떻게 만들어질까?
 
@@ -131,7 +131,7 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 
 ```
 1순위: 퍼널 병목 개선 (상담요청 CVR 29.3% → 직접 원인)
-2순위: 고효율 채널 예산 확대 (tips_capsule +386.5% → 성장 기회)
+2순위: 고효율 채널 예산 확대 (nc_money +289% → 성장 기회)
 3순위: CS 특정 시간대 모니터링 (연결률 94% → 유지)
 ```
 
@@ -147,7 +147,7 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 | ------- | --------- | --------------- |
 | 데이터 통합  | 부서별 분리    | 마케팅+영업+CS 통합    |
 | 의사결정 시간 | 수 시간      | 수 분             |
-| 채널 비교   | 담당자 경험 의존 | 1,464개 전체 정량 비교 |
+| 채널 비교   | 담당자 경험 의존 | 2,047개 전체 정량 비교 |
 | 액션 도출   | 회의 후 결정   | 즉시 실행 가능한 액션 제공 |
 
 
@@ -161,18 +161,20 @@ SQL 하드코딩                    Cortex Analyst 동적 SQL 생성
 
 ```
 CVR 기준 Top-5 채널 추천
-→ CVR 4위: yt_influencer_entertainment (CVR 높음)
-→ 실제 복합score 기준 12위 → 함정 채널
-→ 트래픽/매출 고려 없음 → 잘못된 추천 위험
+→ CVR 3위: yt_influencer_entertainment → 복합score 13위 ❌ 함정
+→ CVR 4위: kakao/sa_talkchannel        → 복합score  6위 ❌ 함정
+→ CVR 5위: naver/sa_internetmain       → 복합score  7위 ❌ 함정
+→ Top-5 중 3개가 하위권 채널 → Top-1 Accuracy 0%
 ```
 
 **Our System:**
 
 ```
 CVR 40% + Revenue per Session 60% 복합 score
-→ tips_capsule/AJD_platform (CVR 34.7%, 복합score 1위)
+→ nc_money/direct_ps (복합score 1위)
 → 실제 매출 기여도 반영 → 올바른 추천
-→ CVR 함정 채널 자동 필터링
+→ CVR 함정 채널 3개 자동 필터링
+→ Top-1 Accuracy 100%
 ```
 
 > Rule-based grounding으로 LLM 환각을 제거하고 실제 데이터 기반으로 보정
@@ -210,8 +212,8 @@ CVR 40% + Revenue per Session 60% 복합 score
 | Top-1 Accuracy       | **100%** (15/15 케이스)          |
 | Top-3 Accuracy       | **100%** (15/15 케이스)          |
 | Hallucination Rate   | **0%** (임계값 2%p 기준)           |
-| CVR Uplift           | **4.9x** (추천 채널 vs 전체 평균)     |
-| Revenue Uplift       | **6.1x**                      |
+| CVR Uplift           | **4.4x** (추천 채널 vs 전체 평균)     |
+| Revenue Uplift       | **8.3x**                      |
 | 멀티도메인 우선순위 정확도       | **2/3** (퍼널 병목 판단)            |
 | 응답 완전성 (3/3)         | **3/3** (conclusion+cause+action) |
 
@@ -222,7 +224,7 @@ CVR 40% + Revenue per Session 60% 복합 score
 | Method         | Top-1 Accuracy | 비고                          |
 | -------------- | -------------- | --------------------------- |
 | Random 추천      | 0%             | 무작위 선택                      |
-| CVR Only       | 100%           | Top-1은 같지만 함정 채널 포함 위험      |
+| CVR Only       | **0%**         | Top-5 중 함정 채널 3개 포함         |
 | **Our System** | **100%**       | CVR + Revenue 복합 score      |
 
 
@@ -233,14 +235,14 @@ Top-1이 같더라도 CVR Only 방식의 위험성은 하위 추천에서 드러
 
 | CVR 순위 | 채널                              | 복합score 순위 | 판정     |
 | ------ | ------------------------------- | ---------- | ------ |
-| 1위     | tips_capsule/AJD_platform       | 1위         | ✅ 정상   |
-| 2위     | kakao/sa_talkchannel            | 4위         | ✅ 정상   |
-| 3위     | naver/sa_internetmain           | 3위         | ✅ 정상   |
-| **4위** | **yt_influencer_entertainment** | **12위**    | ❌ 함정  |
-| 5위     | owned/naver_blog_power_contents | 5위         | ✅ 정상   |
+| 1위     | tips_capsule/AJD_platform       | 2위         | ✅ 정상   |
+| 2위     | nc_money/direct_ps              | 1위         | ✅ 정상   |
+| **3위** | **yt_influencer_entertainment** | **13위**    | ❌ 함정  |
+| **4위** | **kakao/sa_talkchannel**        | **6위**     | ❌ 함정  |
+| **5위** | **naver/sa_internetmain**       | **7위**     | ❌ 함정  |
 
 
-> CVR Only Top-5 중 1개 함정 채널 포함 — 우리 시스템은 복합score로 이를 자동 필터링합니다.
+> CVR Only Top-5 중 **3개**가 함정 채널 — 우리 시스템은 복합score로 이를 자동 필터링합니다.
 
 > ⚠️ 본 평가는 오프라인 데이터 기반이며 실제 매출 증가를 보장하지 않습니다.
 
@@ -253,7 +255,7 @@ Top-1이 같더라도 CVR Only 방식의 위험성은 하위 추천에서 드러
    "어떤 마케팅 채널이 제일 효율적이야?"
         ↓
 2. Cortex Analyst → SQL 자동 생성 / 데모에서는 검증된 SQL 사용
-   (1,464개 채널 전체 조회)
+   (2,047개 채널 전체 조회)
         ↓
 3. Snowpark → 실제 데이터 조회
         ↓
@@ -348,7 +350,7 @@ Final Decision Output (직접원인 / 간접원인 / 우선순위 / 액션)
 
 ## 💡 Why This Is Different
 
-- 단순 추천 ❌ → **1,464개 채널 전체 대비 순위 기반 의사결정** ✅
+- 단순 추천 ❌ → **2,047개 채널 전체 대비 순위 기반 의사결정** ✅
 - 단순 LLM ❌ → **Rule-based grounding으로 hallucination 제거** ✅
 - 단순 분석 ❌ → **즉시 실행 가능한 Action 3개 자동 제공** ✅
 - 단일 부서 ❌ → **마케팅 + 영업 + CS 통합 분석** ✅

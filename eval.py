@@ -360,7 +360,7 @@ def run_eval(eval_path: str = "eval_set.csv") -> None:
             print(f"  Grounding: {hall['status']}  (오차 {hall.get('absolute_error', 0)*100:.3f}%p)")
         if "cvr_uplift_rel" in impact:
             print(f"  CVR Uplift: {impact['cvr_uplift_rel']:.1f}x  Rev Uplift: {impact['rev_uplift_rel']:.1f}x")
-        if expected_priority:
+        if expected_priority and isinstance(expected_priority, str):
             print(f"  우선순위: {'✅' if prio.get('correct') else '❌'}  "
                   f"(예상: {expected_priority} / 실제: {prio.get('got')})")
         print(f"  응답 품질: {quality['status']}  confidence: {quality['confidence']}")
