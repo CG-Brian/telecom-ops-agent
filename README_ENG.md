@@ -48,7 +48,7 @@ Identifies the main funnel bottleneck
 
 ### 3) CS Optimization Insight
 Generates actionable CS optimization suggestions
-![cs demo](./assets/demo_cs.png)
+![cs demo](./assets/cs_demo.png)
 
 > **Demo UI = Interface** / **agent_v2.py = Brain**
 >
